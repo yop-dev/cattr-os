@@ -1,0 +1,6 @@
+# Secrets
+.env
+
+# Docker volumes / runtime data
+data/
+storage/
