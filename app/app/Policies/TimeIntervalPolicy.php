@@ -14,7 +14,7 @@ class TimeIntervalPolicy
 {
     public function before(User $user): ?bool
     {
-        return $user->isAdmin() ?: null;
+        return $user->hasRole([Role::ADMIN, Role::MANAGER, Role::AUDITOR]) ?: null;
     }
 
     public function viewAny(): bool
@@ -59,7 +59,7 @@ class TimeIntervalPolicy
 
     public function update(User $user, TimeInterval $timeInterval): bool
     {
-        return $user->id === $timeInterval->user_id;
+        return false;
     }
 
     public function bulkUpdate(User $user, array $timeIntervalIds): bool
@@ -82,7 +82,7 @@ class TimeIntervalPolicy
      */
     public function destroy(User $user, TimeInterval $timeInterval): bool
     {
-        return $user->id === $timeInterval->user_id;
+        return false;
     }
 
     /**
