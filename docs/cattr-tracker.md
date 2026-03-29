@@ -201,7 +201,7 @@ The backend already supports editing — `EditTimeIntervalRequest` calls `$user-
 | BUG-003 | Admin/company settings missing from navigation on first load | ✅ Fixed | Medium |
 | BUG-004 | Projects "Create" button not visible on first load after login | ✅ Fixed | Medium |
 | BUG-005 | Task "Create" button never visible for employees even when assigned to a project | ✅ Fixed | High |
-| BUG-006 | Company Settings — Actions column buttons misaligned across all settings list pages | ⏳ Pending | Medium |
+| BUG-006 | Company Settings — Actions column buttons misaligned across all settings list pages | ✅ Fixed | Medium |
 
 ---
 
@@ -398,32 +398,51 @@ $self->hasRoleInAnyProject([Role::MANAGER, Role::USER])
 
 ### BUG-006 — Company Settings — Actions column buttons misaligned across all settings list pages
 
-**Status:** ⏳ Pending — not investigated
+**Status:** ✅ Fixed — 2026-03-28
 **Discovered:** 2026-03-28
 **Severity:** Medium — admin cannot reliably act on individual items in any settings list
 
 #### Symptom
 
-Systemic across Company Settings sub-pages. Action buttons (eye, edit, delete) in the Actions column escape their table rows and stack at the bottom-right of the table rather than sitting inline with each row. Confirmed on:
+Action buttons (eye, edit, delete) in the Actions column escaped their table rows — eye buttons rendered aligned with rows but the edit/delete buttons stacked below the last row rather than sitting inline. Confirmed on:
 
-- **Users** — eye (view) buttons for all 4 users stack outside rows; edit button at bottom
-- **Statuses** — edit buttons for Open/Closed stack outside rows; delete button below them
+- **Users** — eye (view) button per row correct; edit button stacked below last row
+- **Statuses** — edit buttons per row correct; delete button stacked below last row
 
-Likely also affects **Priorities** and any other settings sub-page with an Actions column.
+Confirmed does **not** affect **Priorities**.
 
-#### Likely cause
+#### Root Cause
 
-Shared table/list component issue — probably a CSS `position: absolute` on action buttons without a `position: relative` on the row cell, or a missing `overflow: visible` / layout constraint causing all absolutely-positioned buttons to anchor to a common parent instead of their own row.
+`GridView.vue` uses CSS Grid to lay out table rows (`tr { display: grid; grid-template-columns: var(--grid-columns-gt-1620) }`). The actions column width is computed as `${numOfActions / N}fr` relative to the number of data columns. On pages with 4 data columns (Users, Statuses), the actions column gets `~0.67fr` — a narrow slot.
 
-Not likely related to BUG-003/BUG-004 (role hydration race) since the buttons do render — they just render in the wrong position.
+The `.actions__wrapper` in compiled `app.css` has `flex-wrap: wrap`, so when the actions column is too narrow to fit both buttons side-by-side, the second button wraps to a second line. The `td` has a fixed height of `56px` (`at-table--large`) which clips the overflow — all rows except the last silently hide the wrapped button. On the last row, the wrapped button is visible below the table in the empty space before the pagination bar.
 
-#### Files to investigate
+Pages with only 2 data columns (Priorities) are unaffected because the actions column is wide enough (`2fr / (2+2)fr = 50%`) for both buttons to fit on one line.
 
-- Shared list/table component under `resources/frontend/` — look for a shared `<AtTable>`, `<ResourceList>`, or settings page component
-- Search for the CSS class applied to the Actions cell
+#### Fix Applied
+
+CSS override injected in `app/resources/views/app.blade.php` as a `<style>` tag after the compiled `app.css` link. Uses `!important` to override the scoped compiled rule (which carries an attribute selector and would otherwise win on specificity):
+
+```html
+<style>
+    /* BUG-006: prevent action buttons from wrapping to a second line in grid list pages */
+    .crud__table .at-table .actions-column .actions__wrapper {
+        flex-wrap: nowrap !important;
+        align-items: center;
+    }
+</style>
+```
+
+This prevents button wrapping regardless of how narrow the actions column becomes.
+
+#### Files Modified
+
+| File | Tracked location |
+|---|---|
+| `app/resources/views/app.blade.php` | `app/resources/views/app.blade.php` in [yop-dev/cattr-os](https://github.com/yop-dev/cattr-os) |
 
 #### Test
 
-- [ ] Log in as admin → Company Settings > Users → each row shows its own aligned action button(s)
-- [ ] Log in as admin → Company Settings > Statuses → each row shows edit + delete inline
-- [ ] Log in as admin → Company Settings > Priorities → each row shows edit + delete inline
+- [x] Log in as admin → Company Settings > Users → each row shows eye + edit buttons inline ✅
+- [x] Log in as admin → Company Settings > Statuses → each row shows edit + delete inline ✅
+- [x] Log in as admin → Company Settings > Priorities → each row shows edit + delete inline (regression — was never broken) ✅

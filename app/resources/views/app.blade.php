@@ -9,6 +9,13 @@
     <link rel="preconnect" href="https://fonts.gstatic.com">
     <x:sri.link mix href="/dist/app.css" rel="stylesheet" />
     <title>Cattr</title>
+    <style>
+        /* BUG-006: prevent action buttons from wrapping to a second line in grid list pages */
+        .crud__table .at-table .actions-column .actions__wrapper {
+            flex-wrap: nowrap !important;
+            align-items: center;
+        }
+    </style>
 </head>
 <body>
 <noscript>
