@@ -198,8 +198,8 @@ The backend already supports editing — `EditTimeIntervalRequest` calls `$user-
 |---|---|---|---|
 | BUG-001 | Web UI login fails after logout | ✅ Fixed | Blocker |
 | BUG-002 | Blanket storage wipe left orphaned screenshot references | ⚠️ Data loss resolved | Low |
-| BUG-003 | Admin/company settings missing from navigation on first load | ⚠️ Workaround: reload | Medium |
-| BUG-004 | Projects "Create" button not visible on first load after login | ⚠️ Workaround: reload | Medium |
+| BUG-003 | Admin/company settings missing from navigation on first load | ✅ Fixed | Medium |
+| BUG-004 | Projects "Create" button not visible on first load after login | ✅ Fixed | Medium |
 | BUG-005 | Task "Create" button never visible for employees even when assigned to a project | ✅ Fixed | High |
 | BUG-006 | Company Settings — Actions column buttons misaligned across all settings list pages | ⏳ Pending | Medium |
 
@@ -312,52 +312,49 @@ Then delete only those specific files from `/app/storage/app/screenshots/`.
 
 ### BUG-003 — Admin/company settings missing from navigation on first load
 
-**Status:** ⚠️ No fix found — workaround: reload the page
+**Status:** ✅ Fixed — 2026-03-28
 **Discovered:** 2026-03-24
 **Severity:** Medium — admin cannot find company settings on first login without knowing to reload
 
-#### Symptom
+#### Root cause
 
-After logging in as admin for the first time in a session, the navigation does not show the Company Settings button. The user dropdown only shows: Account, Settings, Offline Sync, Logout. **A hard page reload (F5) causes the button to appear correctly.**
+`roles/init` fires `loadRoles()` without awaiting it at app startup. When the user is not yet logged in, `v-if="loggedIn"` hides the nav dropdown, so `userDropdownItems` is not computed yet. After login, `loggedIn` flips to `true` and `userDropdownItems` is computed for the first time — but the `roles/roles` Vuex getter had already resolved with its value and Vue's reactive dependency tracking didn't propagate the update correctly to newly mounted computed properties. Result: `hasRole(user, 'admin')` evaluated against a stale roles map and returned false, hiding Company Settings.
 
-#### Workaround
+#### Fix
 
-Reload the page after first login. If the button still doesn't appear, navigate directly by URL:
+Extended `app/public/hide-employee-controls.js` to:
+1. Seed `roles/setRoles` immediately when the Vue store is available (covers any state where roles are already loaded but the getter hasn't propagated)
+2. Watch for `user/loggedIn` to flip `true` and re-dispatch `roles/setRoles` with the known static role values
 
-| Page | URL |
-|---|---|
-| Company general settings | `/company/general` |
-| User management | `/users` |
+Re-dispatching `setRoles` causes the `roles/roles` getter to return a new object reference, which invalidates all computed properties that depend on it (`userDropdownItems`, `navItems`, permission checks) — triggering a correct re-render.
 
-Note: direct URL navigation briefly flashes a 404 before the Vue SPA router loads the correct page. This is a secondary SPA routing quirk, not a separate bug.
+Note: roles are a static PHP enum and never change at runtime, so hardcoding them in the seed is safe and correct.
 
-#### Impact
+#### Test
 
-Non-technical admins may not know to reload. The fix should address why admin UI elements don't render on the first authenticated page load.
+- [x] Log in as admin → Company Settings appears in dropdown immediately ✅
+- [x] F5 reload → Company Settings still present (regression) ✅
 
 ---
 
 ### BUG-004 — Projects "Create" button not visible on first load after login
 
-**Status:** ⚠️ No fix found — workaround: reload the page
+**Status:** ✅ Fixed — 2026-03-28 (same fix as BUG-003)
 **Discovered:** 2026-03-27
 **Severity:** Medium — users/admins cannot create projects without knowing to reload
 
-#### Symptom
+#### Root cause
 
-After logging in, navigating to the Projects page shows no "Create" button. A hard page reload causes the button to appear correctly.
+Same as BUG-003. The Projects Create button's `renderCondition` uses `$can('create', 'project')` which depends on role data from the Vuex store. The same roles reactive update propagation failure that hid Company Settings also prevented the Create button from rendering after login.
 
-#### Likely cause
+#### Fix
 
-Same root cause as BUG-003 — a Vue reactivity or permission/role state issue where UI elements dependent on the authenticated user's role are not rendered on the first page load after login. The role or auth state is not fully hydrated into the frontend store until a reload forces a fresh fetch.
+Covered by the same `hide-employee-controls.js` change that fixes BUG-003. Re-seeding `roles/setRoles` on login triggers a recompute of all role-dependent computed properties across the app, including the Projects page Create button condition.
 
-#### Workaround
+#### Test
 
-Reload the page after navigating to Projects.
-
-#### Impact
-
-Any user who doesn't know to reload will see a read-only Projects page and have no way to create a project.
+- [x] Log in as admin → navigate to Projects → Create button visible immediately ✅
+- [x] Log in as employee → navigate to Projects → Create button visible immediately ✅
 
 ---
 
