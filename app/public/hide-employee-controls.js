@@ -36,6 +36,17 @@
         });
     }
 
+    // C-002: patch the frontend ProjectPolicy.create() to also allow employees.
+    // The compiled project.policy.js only allows admin/manager — we override the static
+    // method directly on the class stored in the Vuex policies state so the gate picks it up.
+    function patchProjectPolicy(store) {
+        var policies = store.state.policies && store.state.policies.policies;
+        if (!policies || !policies.project) return;
+        policies.project.create = function (user) {
+            return user && (user.role_id === 0 || user.role_id === 1 || user.role_id === 2);
+        };
+    }
+
     var watchSetUp = false;
     function setupLoginWatch(store) {
         if (watchSetUp) return;
@@ -43,6 +54,7 @@
 
         // Seed roles immediately in case they're already loaded but nav hasn't recomputed
         store.dispatch('roles/setRoles', STATIC_ROLES);
+        patchProjectPolicy(store);
 
         // Watch for future logins (loggedIn flipping from false → true)
         store.watch(
@@ -52,6 +64,7 @@
                     // Re-seed to force roles/roles getter to return a new object,
                     // triggering recompute of userDropdownItems and navItems
                     store.dispatch('roles/setRoles', STATIC_ROLES);
+                    patchProjectPolicy(store);
                 }
             }
         );

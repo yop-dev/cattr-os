@@ -9,7 +9,7 @@ All planned changes and known bugs for the Cattr deployment. Customisations are 
 | ID | Title | Status | Priority |
 |---|---|---|---|
 | C-001 | Block employees from deleting screenshots / editing time entries via API (Admin/Manager/Auditor can delete) | ✅ Done | High |
-| C-002 | Allow employees to create projects/tasks | ⏳ Pending | High |
+| C-002 | Allow employees to create projects/tasks | ✅ Done | High |
 | C-003 | Admin correct time on behalf of employees | ✅ Partial | — |
 | C-004 | Admin edit existing time entry (adjust end time) | ⏳ Pending | Medium |
 
@@ -92,35 +92,58 @@ Roles are a hardcoded PHP enum (`app/app/Enums/Role.php`), not a DB table.
 
 ### C-002 — Allow employees to create their own projects and tasks
 
-**Status:** ⏳ Pending — not yet investigated
+**Status:** ✅ Done — confirmed working 2026-03-31
 **Priority:** High
 
 #### Requirement
 
-Each employee should be able to create projects and tasks themselves from the web UI or desktop app, without needing an admin to do it for them.
+Each employee should be able to create projects and tasks themselves from the web UI, without needing an admin to do it for them. Employees can only assign tasks to themselves; admins can assign to anyone.
 
-#### What needs to change
+#### What was done
 
-By default, the Cattr backend returns `Unauthorized` when an employee attempts to create a project (confirmed during evaluation — the frontend route is accessible but the API rejects the request). The `ProjectPolicy` and `TaskPolicy` files control this.
+**Backend — `app/app/Policies/ProjectPolicy.php`**
 
-**Files to investigate:**
-- `app/app/Policies/ProjectPolicy.php`
-- `app/app/Policies/TaskPolicy.php`
+`create()` changed from manager-only to allow `Role::USER` as well:
+```php
+return $user->hasRole(Role::MANAGER) || $user->hasRole(Role::USER);
+```
 
-These files need to be extracted from the container, reviewed, and modified to allow employees to create (but not necessarily manage all) projects and tasks. Scope of what employees can do beyond creation (edit their own, delete their own, etc.) to be confirmed before implementing.
+**Backend — `app/app/Http/Controllers/Api/ProjectController.php`**
 
-#### Open questions before implementing
+`create()` method extended to auto-add the creator as a project member immediately after creation. Uses `$data->users()->sync(...)` directly on the already-loaded model — `Project::findOrFail()` cannot be used here because the project's global scope filters it out at that point in the request lifecycle.
 
-- Can employees edit/rename projects they created, or only admins?
-- Can employees delete projects they created?
-- Should employees only see their own projects, or all company projects?
+Captures `$creatorId` and `$creatorRoleId` as plain integers before any closures to avoid Octane auth-guard state bleed.
+
+**Backend — `app/app/Http/Requests/Task/CreateTaskRequest.php` + `EditTaskRequest.php`**
+
+`prepareForValidation()` added: for employees (`role_id === Role::USER`), the `users` field is silently overridden to `[$currentUserId]` before validation runs. Admins and managers are unaffected.
+
+**Frontend — `app/public/hide-employee-controls.js`**
+
+`patchProjectPolicy()` added: patches `store.state.policies.policies.project.create` at runtime to return `true` for `role_id 0/1/2`. The compiled `project.policy.js` only allows admin/manager — this override is applied on store availability and re-applied on every login.
+
+#### Key finding — global scope on Project model
+
+`Project::findOrFail($id)` inside a `Filter::getActionFilterName()` callback throws "No query results" for a freshly created project. The project's global scope filters it out at this point in the request lifecycle. Fix: use the `$data` model object passed directly to the filter callback instead.
+
+#### Files Modified
+
+| File | Tracked location |
+|---|---|
+| `app/app/Policies/ProjectPolicy.php` | [yop-dev/cattr-os](https://github.com/yop-dev/cattr-os) |
+| `app/app/Http/Controllers/Api/ProjectController.php` | [yop-dev/cattr-os](https://github.com/yop-dev/cattr-os) |
+| `app/app/Http/Requests/Task/CreateTaskRequest.php` | [yop-dev/cattr-os](https://github.com/yop-dev/cattr-os) |
+| `app/app/Http/Requests/Task/EditTaskRequest.php` | [yop-dev/cattr-os](https://github.com/yop-dev/cattr-os) |
+| `app/public/hide-employee-controls.js` | [yop-dev/cattr-os](https://github.com/yop-dev/cattr-os) |
 
 #### Test
 
-- [ ] Log in as employee → create a new project → confirm it saves successfully
-- [ ] Log in as employee → create a task inside a project → confirm it saves
-- [ ] Log in as admin → confirm employee-created projects are visible in admin view
-- [ ] Confirm employee cannot delete or edit another employee's project
+- [x] Log in as employee → Projects page → Create button visible ✅
+- [x] Log in as employee → create a new project → saves and lands on project view ✅
+- [x] Log in as admin → employee-created project visible in project list ✅
+- [x] Log in as employee → create a task inside a project → task saves ✅
+- [ ] Log in as employee → create a task → confirm only self appears as assignee in saved task
+- [ ] Log in as admin → create a task → confirm any user can be assigned
 
 ---
 

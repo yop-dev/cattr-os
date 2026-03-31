@@ -13,5 +13,12 @@ COPY app/app/Policies/TimeIntervalPolicy.php /app/app/Policies/TimeIntervalPolic
 COPY app/app/Models/User.php /app/app/Models/User.php
 
 # C-001: Hide trash button in screenshot modal for non-admins (frontend injection)
+# C-002: Patch frontend ProjectPolicy.create() to allow employees (see patchProjectPolicy)
 COPY app/public/hide-employee-controls.js /app/public/hide-employee-controls.js
 COPY app/resources/views/app.blade.php /app/resources/views/app.blade.php
+
+# C-002: Allow employees to create projects and tasks; auto-add creator as project member
+COPY app/app/Policies/ProjectPolicy.php /app/app/Policies/ProjectPolicy.php
+COPY app/app/Http/Controllers/Api/ProjectController.php /app/app/Http/Controllers/Api/ProjectController.php
+COPY app/app/Http/Requests/Task/CreateTaskRequest.php /app/app/Http/Requests/Task/CreateTaskRequest.php
+COPY app/app/Http/Requests/Task/EditTaskRequest.php /app/app/Http/Requests/Task/EditTaskRequest.php
