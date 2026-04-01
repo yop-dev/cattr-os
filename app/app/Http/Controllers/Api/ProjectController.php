@@ -131,8 +131,10 @@ class ProjectController extends ItemController
         // C-002: auto-add the creator as a project member after the item is created.
         // Use $data directly (the already-loaded Project model) rather than Project::findOrFail
         // because global scopes on Project would filter it out and throw "No query results".
-        Filter::listen(Filter::getActionFilterName(), static function ($data) use ($creatorId, $creatorRoleId) {
-            $data->users()->sync([$creatorId => ['role_id' => $creatorRoleId]]);
+        // Use MANAGER role (1) in the pivot so hasProjectRole(ANY) recognises the membership —
+        // the upstream only checks MANAGER/AUDITOR pivot roles, not the global USER (2) role.
+        Filter::listen(Filter::getActionFilterName(), static function ($data) use ($creatorId) {
+            $data->users()->sync([$creatorId => ['role_id' => Role::MANAGER->value]]);
             return $data->load('statuses');
         });
 
