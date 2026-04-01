@@ -25,15 +25,68 @@
         return (user && user.role_id !== undefined) ? user.role_id : null;
     }
 
+    function addDeleteConfirmation(btn) {
+        if (btn._confirmAdded) return;
+        btn._confirmAdded = true;
+
+        btn.addEventListener('click', async function (e) {
+            if (btn._confirmed) {
+                btn._confirmed = false;
+                return; // passthrough — Vue handler proceeds
+            }
+            e.stopImmediatePropagation();
+            e.preventDefault();
+
+            var appEl = document.getElementById('app');
+            var vm = appEl && appEl.__vue__;
+            if (!vm || !vm.$CustomModal) return;
+
+            var result = await vm.$CustomModal({
+                title: vm.$t('notification.record.delete.confirmation.title'),
+                content: vm.$t('notification.record.delete.confirmation.message'),
+                okText: vm.$t('control.delete'),
+                cancelText: vm.$t('control.cancel'),
+                showClose: false,
+                styles: {
+                    'border-radius': '10px',
+                    'text-align': 'center',
+                    footer: { 'text-align': 'center' },
+                    header: { padding: '16px 35px 4px 35px', color: 'red' },
+                    body: { padding: '16px 35px 4px 35px' },
+                },
+                width: 320,
+                type: 'trash',
+                typeButton: 'error',
+            });
+
+            if (result === 'confirm') {
+                btn._confirmed = true;
+                btn.click();
+            }
+        }, true); // capture phase — runs before Vue's handler
+    }
+
     function applyRestrictions() {
         var roleId = getRoleId();
-        if (roleId === null) return;  // not loaded yet
-        if (roleId !== 2) return;     // admin/manager/auditor — show everything
+        if (roleId === null) return; // not loaded yet
 
-        // Hide screenshot modal trash button for employees only
+        // Screenshot modal trash button
         document.querySelectorAll('.modal-remove').forEach(function (btn) {
-            btn.style.display = 'none';
+            if (roleId === 2) {
+                // Employee: hide the button
+                btn.style.display = 'none';
+            } else {
+                // Admin/Manager/Auditor: attach confirmation (idempotent)
+                addDeleteConfirmation(btn);
+            }
         });
+
+        // Selection panel bulk delete (Timeline + Team pages) — never shown to employees by Vue
+        if (roleId !== 2) {
+            document.querySelectorAll('.time-interval-edit-panel__btn.at-btn--error').forEach(function (btn) {
+                addDeleteConfirmation(btn);
+            });
+        }
     }
 
     // C-002: patch the frontend ProjectPolicy.create() to also allow employees.
