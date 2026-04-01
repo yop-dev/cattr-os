@@ -88,6 +88,11 @@
             }
         });
 
+        // "Add Time" button (controls row) — hide for employees
+        document.querySelectorAll('.controls-row__btn:has(.icon-edit)').forEach(function (btn) {
+            btn.style.display = roleId === 2 ? 'none' : '';
+        });
+
         // Selection panel bulk delete (Timeline + Team pages) — never shown to employees by Vue
         if (roleId !== 2) {
             document.querySelectorAll('.time-interval-edit-panel__btn.at-btn--error').forEach(function (btn) {
