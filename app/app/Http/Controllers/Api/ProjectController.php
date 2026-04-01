@@ -103,7 +103,6 @@ class ProjectController extends ItemController
         // C-002: capture creator identity as plain integers now, before any closures run,
         // to avoid Octane auth-guard state bleed inside callbacks.
         $creatorId = (int) $request->user()->id;
-        $creatorRoleId = (int) $request->user()->role_id;
 
         Filter::listen(Filter::getRequestFilterName(), static function ($requestData) {
             if (isset($requestData['group']) && is_array($requestData['group'])) {
@@ -135,6 +134,10 @@ class ProjectController extends ItemController
         // the upstream only checks MANAGER/AUDITOR pivot roles, not the global USER (2) role.
         Filter::listen(Filter::getActionFilterName(), static function ($data) use ($creatorId) {
             $data->users()->sync([$creatorId => ['role_id' => Role::MANAGER->value]]);
+            // C-002: bust the Octane role cache so hasProjectRole sees the new membership
+            // on the immediately-following show/task-create requests.
+            \Cache::store('octane')->forget("role_project_$creatorId");
+            \Cache::store('octane')->forget("role_any_project_$creatorId");
             return $data->load('statuses');
         });
 
