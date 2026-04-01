@@ -32,36 +32,43 @@
         btn.addEventListener('click', async function (e) {
             if (btn._confirmed) {
                 btn._confirmed = false;
-                return; // passthrough — Vue handler proceeds
+                return; // passthrough — Vue handler proceeds (re-fires from btn.click() below)
             }
-            e.stopImmediatePropagation();
-            e.preventDefault();
 
             var appEl = document.getElementById('app');
             var vm = appEl && appEl.__vue__;
-            if (!vm || !vm.$CustomModal) return;
+            if (!vm || !vm.$CustomModal) return; // degrade gracefully — delete fires without confirmation
 
-            var result = await vm.$CustomModal({
-                title: vm.$t('notification.record.delete.confirmation.title'),
-                content: vm.$t('notification.record.delete.confirmation.message'),
-                okText: vm.$t('control.delete'),
-                cancelText: vm.$t('control.cancel'),
-                showClose: false,
-                styles: {
-                    'border-radius': '10px',
-                    'text-align': 'center',
-                    footer: { 'text-align': 'center' },
-                    header: { padding: '16px 35px 4px 35px', color: 'red' },
-                    body: { padding: '16px 35px 4px 35px' },
-                },
-                width: 320,
-                type: 'trash',
-                typeButton: 'error',
-            });
+            e.stopImmediatePropagation();
+            e.preventDefault();
 
-            if (result === 'confirm') {
-                btn._confirmed = true;
-                btn.click();
+            if (btn._modalOpen) return; // prevent concurrent modals on double-click
+            btn._modalOpen = true;
+            try {
+                var result = await vm.$CustomModal({
+                    title: vm.$t('notification.record.delete.confirmation.title'),
+                    content: vm.$t('notification.record.delete.confirmation.message'),
+                    okText: vm.$t('control.delete'),
+                    cancelText: vm.$t('control.cancel'),
+                    showClose: false,
+                    styles: {
+                        'border-radius': '10px',
+                        'text-align': 'center',
+                        footer: { 'text-align': 'center' },
+                        header: { padding: '16px 35px 4px 35px', color: 'red' },
+                        body: { padding: '16px 35px 4px 35px' },
+                    },
+                    width: 320,
+                    type: 'trash',
+                    typeButton: 'error',
+                });
+
+                if (result === 'confirm') {
+                    btn._confirmed = true;
+                    btn.click(); // re-fires this listener; _confirmed flag handles the passthrough
+                }
+            } finally {
+                btn._modalOpen = false;
             }
         }, true); // capture phase — runs before Vue's handler
     }
