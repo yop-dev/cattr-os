@@ -13,9 +13,13 @@
     ];
 
     function getStore() {
+        var vm = getVm();
+        return vm ? vm.$store : null;
+    }
+
+    function getVm() {
         var el = document.getElementById('app');
-        if (!el || !el.__vue__) return null;
-        return el.__vue__.$store;
+        return (el && el.__vue__) ? el.__vue__ : null;
     }
 
     function getRoleId() {
@@ -102,8 +106,6 @@
     }
 
     // C-002: patch frontend policies to also allow employees to create projects and tasks.
-    // The compiled policy.js files only allow admin/manager — we override the static
-    // methods directly on the classes stored in the Vuex policies state so the gate picks them up.
     function patchPolicies(store) {
         var policies = store.state.policies && store.state.policies.policies;
         if (!policies) return;
@@ -121,12 +123,45 @@
         }
     }
 
+    // C-007: rename project form field labels via direct DOM text replacement.
+    // field.name ("Report name") → "Project Name" everywhere.
+    // field.description ("Description") → "Task Description" on /projects routes only.
+    // Uses a TreeWalker to find all text nodes — class-agnostic, works regardless of
+    // which CRUD framework component renders the label.
+    function applyLabelRenames() {
+        var onProjectRoute = window.location.pathname.startsWith('/projects');
+
+        // Walk all text nodes and replace matching strings
+        var walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT, null, false);
+        var node;
+        while ((node = walker.nextNode())) {
+            var t = node.nodeValue;
+            if (!t) continue;
+            if (t.indexOf('Report name') !== -1) {
+                node.nodeValue = t.replace(/Report name/g, 'Project Name');
+                t = node.nodeValue;
+            }
+            if (onProjectRoute && t === 'Description') {
+                node.nodeValue = 'Task Description';
+            }
+        }
+
+        // Fix placeholders on inputs and textareas
+        document.querySelectorAll('input[placeholder="Report name"], textarea[placeholder="Report name"]').forEach(function (el) {
+            el.placeholder = 'Project Name';
+        });
+        if (onProjectRoute) {
+            document.querySelectorAll('input[placeholder="Description"], textarea[placeholder="Description"]').forEach(function (el) {
+                el.placeholder = 'Task Description';
+            });
+        }
+    }
+
     var watchSetUp = false;
     function setupLoginWatch(store) {
         if (watchSetUp) return;
         watchSetUp = true;
 
-        // Seed roles immediately in case they're already loaded but nav hasn't recomputed
         store.dispatch('roles/setRoles', STATIC_ROLES);
         patchPolicies(store);
 
@@ -150,6 +185,7 @@
             setupLoginWatch(store);
         }
         applyRestrictions();
+        applyLabelRenames();
     });
 
     document.addEventListener('DOMContentLoaded', function () {
