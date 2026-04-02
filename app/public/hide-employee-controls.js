@@ -235,9 +235,11 @@
                 }
             }
 
-            // Pre-fill priority and status defaults (once per component instance)
-            if (!comp._defaultsInjected && comp.$data.values) {
-                comp._defaultsInjected = true;
+            // Pre-fill priority and status defaults whenever values are null/unset.
+            // No idempotency flag — we re-check every tick so that if the component's
+            // own fetchData() runs after us and resets the values, we re-inject on the
+            // next MutationObserver tick. The falsy check prevents overriding user changes.
+            if (comp.$data.values) {
                 if (_priorityId && !comp.$data.values.priority_id) {
                     vm.$set(comp.$data.values, 'priority_id', _priorityId);
                 }
