@@ -146,8 +146,8 @@
             if (onProjectRoute && t === 'Description') {
                 node.nodeValue = 'Task Description';
             }
-            if (onTaskRoute && t === 'Name') {
-                node.nodeValue = 'Task Name';
+            if (onTaskRoute && t.trim() === 'Name') {
+                node.nodeValue = t.replace('Name', 'Task Name');
             }
         }
 
@@ -201,8 +201,8 @@
         if (_fetchingDefaults) return;
         _fetchingDefaults = true;
         Promise.all([
-            fetch('/api/priorities').then(function (r) { return r.json(); }),
-            fetch('/api/statuses').then(function (r) { return r.json(); }),
+            fetch('/api/priorities/list').then(function (r) { return r.json(); }),
+            fetch('/api/statuses/list').then(function (r) { return r.json(); }),
         ]).then(function (results) {
             var priorities = (results[0] && results[0].data) ? results[0].data : [];
             var statuses = (results[1] && results[1].data) ? results[1].data : [];
