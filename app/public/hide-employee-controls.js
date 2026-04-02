@@ -195,8 +195,8 @@
     // C-008: on /tasks/*, remove required from description (new + edit forms).
     // On /tasks/new only, also pre-fill priority/status defaults.
     // fetchTaskDefaults() fetches /api/priorities/list and /api/statuses/list once and caches the IDs.
-    // _descriptionUnrequired flag on the component prevents re-patching the fields array.
-    // Priority/status injection re-runs every tick; the falsy check prevents overriding user/fetchData values.
+    // Both description and defaults re-run every tick so fetchData() resets are caught on the next tick.
+    // Current-value checks are the idempotency guards (no component-level flags).
     function fetchTaskDefaults(callback) {
         if (_priorityId && _statusId) { callback(); return; }
         if (_fetchingDefaults) return;
@@ -229,15 +229,15 @@
         var comp = findNewFormComponent(vm);
         if (!comp) return;
 
-        // Remove required from description on both new and edit forms (once per component instance)
-        if (!comp._descriptionUnrequired) {
-            comp._descriptionUnrequired = true;
-            var fields = comp.$data.fields;
-            for (var i = 0; i < fields.length; i++) {
-                if (fields[i].key === 'description') {
-                    fields[i].required = false;
-                    break;
-                }
+        // Remove required from description on both new and edit forms.
+        // No idempotency flag — re-check every tick so that if the component's fetchData()
+        // resets the fields array (restoring required:true), we re-patch on the next tick.
+        // The current value check `fields[i].required` is the idempotency guard.
+        var fields = comp.$data.fields;
+        for (var i = 0; i < fields.length; i++) {
+            if (fields[i].key === 'description' && fields[i].required) {
+                fields[i].required = false;
+                break;
             }
         }
 
