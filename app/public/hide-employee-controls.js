@@ -236,7 +236,7 @@
             }
 
             // Pre-fill priority and status defaults (once per component instance)
-            if (!comp._defaultsInjected) {
+            if (!comp._defaultsInjected && comp.$data.values) {
                 comp._defaultsInjected = true;
                 if (_priorityId && !comp.$data.values.priority_id) {
                     vm.$set(comp.$data.values, 'priority_id', _priorityId);
