@@ -200,9 +200,14 @@
         if (_priorityId && _statusId) { callback(); return; }
         if (_fetchingDefaults) return;
         _fetchingDefaults = true;
+
+        // Cattr stores the API token in localStorage under 'access_token'
+        var token = localStorage.getItem('access_token');
+        var headers = token ? { 'Authorization': 'Bearer ' + token } : {};
+
         Promise.all([
-            fetch('/api/priorities/list').then(function (r) { return r.json(); }),
-            fetch('/api/statuses/list').then(function (r) { return r.json(); }),
+            fetch('/api/priorities/list', { credentials: 'same-origin', headers: headers }).then(function (r) { return r.json(); }),
+            fetch('/api/statuses/list', { credentials: 'same-origin', headers: headers }).then(function (r) { return r.json(); }),
         ]).then(function (results) {
             var priorities = (results[0] && results[0].data) ? results[0].data : [];
             var statuses = (results[1] && results[1].data) ? results[1].data : [];
