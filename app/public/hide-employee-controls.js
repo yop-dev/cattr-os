@@ -174,9 +174,10 @@
     var _statusId = null;
     var _fetchingDefaults = false;
 
-    // C-008: find the CRUD EditView component for a "new" form in the Vue tree.
-    // The component is identified by having pageData.type === 'new' and a fields array.
+    // C-008: find the Vue component rendering a "new record" form in the component tree.
+    // Identified by pageData.type === 'new' and a populated fields array.
     function findNewFormComponent(root) {
+        if (!root) return null;
         function search(c) {
             if (c.$data && c.$data.pageData && c.$data.pageData.type === 'new' && Array.isArray(c.$data.fields)) {
                 return c;
