@@ -126,10 +126,12 @@
     // C-007: rename project form field labels via direct DOM text replacement.
     // field.name ("Report name") → "Project Name" everywhere.
     // field.description ("Description") → "Task Description" on /projects routes only.
+    // C-008: rename task name field "Name" → "Task Name" on /tasks routes.
     // Uses a TreeWalker to find all text nodes — class-agnostic, works regardless of
     // which CRUD framework component renders the label.
     function applyLabelRenames() {
         var onProjectRoute = window.location.pathname.startsWith('/projects');
+        var onTaskRoute = window.location.pathname.startsWith('/tasks');
 
         // Walk all text nodes and replace matching strings
         var walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT, null, false);
@@ -144,6 +146,9 @@
             if (onProjectRoute && t === 'Description') {
                 node.nodeValue = 'Task Description';
             }
+            if (onTaskRoute && t === 'Name') {
+                node.nodeValue = 'Task Name';
+            }
         }
 
         // Fix placeholders on inputs and textareas
@@ -153,6 +158,13 @@
         if (onProjectRoute) {
             document.querySelectorAll('input[placeholder="Description"], textarea[placeholder="Description"]').forEach(function (el) {
                 el.placeholder = 'Task Description';
+            });
+        }
+        if (onTaskRoute) {
+            // Override the global C-007 "Project Name" placeholder back to "Task Name"
+            // for the task_name input specifically (it uses field.name as its placeholder key)
+            document.querySelectorAll('input[placeholder="Project Name"], textarea[placeholder="Project Name"]').forEach(function (el) {
+                el.placeholder = 'Task Name';
             });
         }
     }
