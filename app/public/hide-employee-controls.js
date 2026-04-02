@@ -192,6 +192,62 @@
         return search(root);
     }
 
+    // C-008: on /tasks/new, remove required from description and pre-fill priority/status defaults.
+    // fetchTaskDefaults() fetches /api/priorities and /api/statuses once and caches the IDs.
+    // applyTaskFormSetup() is called on every MutationObserver tick; idempotency flags on the
+    // component (_descriptionUnrequired, _defaultsInjected) prevent repeated patching.
+    function fetchTaskDefaults(callback) {
+        if (_priorityId && _statusId) { callback(); return; }
+        if (_fetchingDefaults) return;
+        _fetchingDefaults = true;
+        Promise.all([
+            fetch('/api/priorities').then(function (r) { return r.json(); }),
+            fetch('/api/statuses').then(function (r) { return r.json(); }),
+        ]).then(function (results) {
+            var priorities = (results[0] && results[0].data) ? results[0].data : [];
+            var statuses = (results[1] && results[1].data) ? results[1].data : [];
+            for (var i = 0; i < priorities.length; i++) {
+                if (priorities[i].name === 'Normal') { _priorityId = priorities[i].id; break; }
+            }
+            for (var j = 0; j < statuses.length; j++) {
+                if (statuses[j].name === 'Open') { _statusId = statuses[j].id; break; }
+            }
+            _fetchingDefaults = false;
+            callback();
+        }).catch(function () { _fetchingDefaults = false; });
+    }
+
+    function applyTaskFormSetup(vm) {
+        if (!window.location.pathname.startsWith('/tasks/new')) return;
+        fetchTaskDefaults(function () {
+            var comp = findNewFormComponent(vm);
+            if (!comp) return;
+
+            // Remove required from description (once per component instance)
+            if (!comp._descriptionUnrequired) {
+                comp._descriptionUnrequired = true;
+                var fields = comp.$data.fields;
+                for (var i = 0; i < fields.length; i++) {
+                    if (fields[i].key === 'description') {
+                        fields[i].required = false;
+                        break;
+                    }
+                }
+            }
+
+            // Pre-fill priority and status defaults (once per component instance)
+            if (!comp._defaultsInjected) {
+                comp._defaultsInjected = true;
+                if (_priorityId && !comp.$data.values.priority_id) {
+                    vm.$set(comp.$data.values, 'priority_id', _priorityId);
+                }
+                if (_statusId && !comp.$data.values.status_id) {
+                    vm.$set(comp.$data.values, 'status_id', _statusId);
+                }
+            }
+        });
+    }
+
     var watchSetUp = false;
     function setupLoginWatch(store) {
         if (watchSetUp) return;
@@ -221,6 +277,12 @@
         }
         applyRestrictions();
         applyLabelRenames();
+
+        // C-008: patch task creation form on /tasks/new
+        var vm = getVm();
+        if (vm) {
+            applyTaskFormSetup(vm);
+        }
     });
 
     document.addEventListener('DOMContentLoaded', function () {
