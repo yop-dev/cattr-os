@@ -40,17 +40,10 @@ class UserAccessScope implements Scope
             return $builder;
         }
 
-        return $builder
-            ->where('id', $user->id)
-            ->orWhereHas('projectsRelation', static fn(Builder $builder) => $builder
-                ->whereIn('project_id', static fn(Builder $builder) => $builder
-                    ->from('projects_users')
-                    ->select('project_id')
-                    ->where(static fn(Builder $builder) => $builder
-                        ->where('user_id', $user->id)
-                        ->where('role_id', Role::MANAGER->value))
-                    ->orWhere(static fn(Builder $builder) => $builder
-                        ->where('user_id', $user->id)
-                        ->where('role_id', Role::AUDITOR->value))));
+        // C-002 side-effect fix: employees who create projects get project MANAGER role in
+        // projects_users. The upstream orWhereHas expansion would let employee-creators see
+        // all other project members in User queries (reports user filter, task assignee lists).
+        // Employees must only ever see themselves.
+        return $builder->where('id', $user->id);
     }
 }
