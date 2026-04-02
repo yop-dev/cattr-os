@@ -234,11 +234,20 @@
         // resets the fields array (restoring required:true), we re-patch on the next tick.
         // The current value check `fields[i].required` is the idempotency guard.
         var fields = comp.$data.fields;
+        var didPatch = false;
         for (var i = 0; i < fields.length; i++) {
             if (fields[i].key === 'description' && fields[i].required) {
                 fields[i].required = false;
+                didPatch = true;
                 break;
             }
+        }
+        // After patching required=false, vee-validate's ValidationObserver won't
+        // automatically re-run validation (the 'invalid' flag stays true from the
+        // initial required-field check). Force a re-validate so the save button
+        // becomes enabled when description is empty.
+        if (didPatch && comp.$refs && comp.$refs.form && typeof comp.$refs.form.validate === 'function') {
+            comp.$refs.form.validate();
         }
 
         // Pre-fill priority and status defaults on new form only
