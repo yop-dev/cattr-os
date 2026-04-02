@@ -242,12 +242,24 @@
                 break;
             }
         }
-        // After patching required=false, vee-validate's ValidationObserver won't
-        // automatically re-run validation (the 'invalid' flag stays true from the
-        // initial required-field check). Force a re-validate so the save button
-        // becomes enabled when description is empty.
-        if (didPatch && comp.$refs && comp.$refs.form && typeof comp.$refs.form.validate === 'function') {
-            comp.$refs.form.validate();
+        // After patching required=false, vee-validate retains the provider's last
+        // validation state (invalid, because it was required+empty on first render).
+        // Validate ONLY the description provider so the observer recomputes it as
+        // valid (empty field, no rules) without touching Project/Name providers —
+        // calling the full form.validate() causes those fields to go red prematurely.
+        if (didPatch) {
+            // Use $nextTick so Vue propagates field.required=false to the :rules binding
+            // before re-validating. Calling validate() synchronously still sees the old
+            // 'required' rule and shows "The Description field is required".
+            comp.$nextTick(function () {
+                var formRef = comp.$refs && comp.$refs.form;
+                if (formRef && formRef.refs) {
+                    var descProv = formRef.refs['description'];
+                    if (descProv && typeof descProv.validate === 'function') {
+                        descProv.validate();
+                    }
+                }
+            });
         }
 
         // Pre-fill priority and status defaults on new form only
