@@ -17,6 +17,9 @@ COPY app/app/Models/User.php /app/app/Models/User.php
 COPY app/public/hide-employee-controls.js /app/public/hide-employee-controls.js
 COPY app/resources/views/app.blade.php /app/resources/views/app.blade.php
 
+# C-002 side-effect fix: restrict time interval queries to own data for employees
+COPY app/app/Scopes/TimeIntervalAccessScope.php /app/app/Scopes/TimeIntervalAccessScope.php
+
 # C-002: Allow employees to create projects and tasks; auto-add creator as project member
 COPY app/app/Policies/ProjectPolicy.php /app/app/Policies/ProjectPolicy.php
 COPY app/app/Http/Controllers/Api/ProjectController.php /app/app/Http/Controllers/Api/ProjectController.php
