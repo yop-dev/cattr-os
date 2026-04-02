@@ -284,8 +284,10 @@ class User extends Authenticatable
     {
         $self = $this;
         return Attribute::make(
-            get: static fn() => $self->hasRole([Role::ADMIN, Role::MANAGER, Role::AUDITOR])
-                || $self->hasRoleInAnyProject([Role::MANAGER, Role::AUDITOR]),
+            // C-002 side-effect fix: employees who create projects get project MANAGER role,
+            // which would otherwise satisfy hasRoleInAnyProject and expose the Team tab.
+            // Team tab is restricted to global ADMIN/MANAGER/AUDITOR only.
+            get: static fn() => $self->hasRole([Role::ADMIN, Role::MANAGER, Role::AUDITOR]),
         );
     }
 
