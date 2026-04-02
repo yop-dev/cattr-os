@@ -36,7 +36,7 @@ class CreateTaskRequest extends CattrFormRequest
                     ->where('project_id', $this->input('project_id')),
             ],
             'task_name' => 'required|string',
-            'description' => 'string',
+            'description' => 'nullable|string',
             'users' => 'sometimes|array',
             'users.*' => 'exists:users,id',
             'active' => 'bool',

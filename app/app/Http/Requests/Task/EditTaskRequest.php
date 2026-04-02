@@ -37,7 +37,7 @@ class EditTaskRequest extends CattrFormRequest
                     ->where('project_id', $this->input('project_id')),
             ],
             'task_name' => 'sometimes|required|string',
-            'description' => 'string',
+            'description' => 'nullable|string',
             'users' => 'sometimes|array',
             'users.*' => 'required|exists:users,id',
             'active' => 'bool',

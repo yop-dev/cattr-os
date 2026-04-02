@@ -174,12 +174,12 @@
     var _statusId = null;
     var _fetchingDefaults = false;
 
-    // C-008: find the Vue component rendering a "new record" form in the component tree.
-    // Identified by pageData.type === 'new' and a populated fields array.
+    // C-008: find the Vue component rendering a task form (new or edit) in the component tree.
+    // Identified by pageData.type === 'new'|'edit' and a populated fields array.
     function findNewFormComponent(root) {
         if (!root) return null;
         function search(c) {
-            if (c.$data && c.$data.pageData && c.$data.pageData.type === 'new' && Array.isArray(c.$data.fields)) {
+            if (c.$data && c.$data.pageData && (c.$data.pageData.type === 'new' || c.$data.pageData.type === 'edit') && Array.isArray(c.$data.fields)) {
                 return c;
             }
             var children = c.$children || [];
@@ -192,10 +192,11 @@
         return search(root);
     }
 
-    // C-008: on /tasks/new, remove required from description and pre-fill priority/status defaults.
-    // fetchTaskDefaults() fetches /api/priorities and /api/statuses once and caches the IDs.
-    // applyTaskFormSetup() is called on every MutationObserver tick; idempotency flags on the
-    // component (_descriptionUnrequired, _defaultsInjected) prevent repeated patching.
+    // C-008: on /tasks/*, remove required from description (new + edit forms).
+    // On /tasks/new only, also pre-fill priority/status defaults.
+    // fetchTaskDefaults() fetches /api/priorities/list and /api/statuses/list once and caches the IDs.
+    // _descriptionUnrequired flag on the component prevents re-patching the fields array.
+    // Priority/status injection re-runs every tick; the falsy check prevents overriding user/fetchData values.
     function fetchTaskDefaults(callback) {
         if (_priorityId && _statusId) { callback(); return; }
         if (_fetchingDefaults) return;
@@ -223,36 +224,38 @@
     }
 
     function applyTaskFormSetup(vm) {
-        if (!window.location.pathname.startsWith('/tasks/new')) return;
-        fetchTaskDefaults(function () {
-            var comp = findNewFormComponent(vm);
-            if (!comp) return;
+        if (!window.location.pathname.startsWith('/tasks/')) return;
 
-            // Remove required from description (once per component instance)
-            if (!comp._descriptionUnrequired) {
-                comp._descriptionUnrequired = true;
-                var fields = comp.$data.fields;
-                for (var i = 0; i < fields.length; i++) {
-                    if (fields[i].key === 'description') {
-                        fields[i].required = false;
-                        break;
-                    }
+        var comp = findNewFormComponent(vm);
+        if (!comp) return;
+
+        // Remove required from description on both new and edit forms (once per component instance)
+        if (!comp._descriptionUnrequired) {
+            comp._descriptionUnrequired = true;
+            var fields = comp.$data.fields;
+            for (var i = 0; i < fields.length; i++) {
+                if (fields[i].key === 'description') {
+                    fields[i].required = false;
+                    break;
                 }
             }
+        }
 
-            // Pre-fill priority and status defaults whenever values are null/unset.
-            // No idempotency flag — we re-check every tick so that if the component's
-            // own fetchData() runs after us and resets the values, we re-inject on the
-            // next MutationObserver tick. The falsy check prevents overriding user changes.
-            if (comp.$data.values) {
-                if (_priorityId && !comp.$data.values.priority_id) {
-                    vm.$set(comp.$data.values, 'priority_id', _priorityId);
+        // Pre-fill priority and status defaults on new form only
+        if (window.location.pathname.startsWith('/tasks/new')) {
+            fetchTaskDefaults(function () {
+                var newComp = findNewFormComponent(vm);
+                if (!newComp || !newComp.$data.values) return;
+                // Re-check every tick so fetchData() resets are caught on the next tick.
+                // Falsy check prevents overriding user changes.
+                if (_priorityId && !newComp.$data.values.priority_id) {
+                    vm.$set(newComp.$data.values, 'priority_id', _priorityId);
                 }
-                if (_statusId && !comp.$data.values.status_id) {
-                    vm.$set(comp.$data.values, 'status_id', _statusId);
+                if (_statusId && !newComp.$data.values.status_id) {
+                    vm.$set(newComp.$data.values, 'status_id', _statusId);
                 }
-            }
-        });
+            });
+        }
     }
 
     var watchSetUp = false;
