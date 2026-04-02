@@ -169,6 +169,28 @@
         }
     }
 
+    // C-008: cache for API-fetched priority/status IDs
+    var _priorityId = null;
+    var _statusId = null;
+    var _fetchingDefaults = false;
+
+    // C-008: find the CRUD EditView component for a "new" form in the Vue tree.
+    // The component is identified by having pageData.type === 'new' and a fields array.
+    function findNewFormComponent(root) {
+        function search(c) {
+            if (c.$data && c.$data.pageData && c.$data.pageData.type === 'new' && Array.isArray(c.$data.fields)) {
+                return c;
+            }
+            var children = c.$children || [];
+            for (var i = 0; i < children.length; i++) {
+                var found = search(children[i]);
+                if (found) return found;
+            }
+            return null;
+        }
+        return search(root);
+    }
+
     var watchSetUp = false;
     function setupLoginWatch(store) {
         if (watchSetUp) return;
