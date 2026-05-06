@@ -25,5 +25,6 @@
 <x:sri.script mix src="/dist/app.js"></x:sri-script>
 <script src="/hide-employee-controls.js"></script>
 <script src="/quick-create.js"></script>
+<script src="/dashboard-nav.js"></script>
 </body>
 </html>

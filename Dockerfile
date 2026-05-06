@@ -31,3 +31,6 @@ COPY app/app/Http/Requests/Task/EditTaskRequest.php /app/app/Http/Requests/Task/
 
 # C-009: Quick-create task/project bar on dashboard
 COPY app/public/quick-create.js /app/public/quick-create.js
+
+# C-010: Move Team tab from dashboard to header nav
+COPY app/public/dashboard-nav.js /app/public/dashboard-nav.js
