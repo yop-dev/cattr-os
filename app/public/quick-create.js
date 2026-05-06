@@ -17,7 +17,7 @@
 
     function isOnDashboard() {
         var p = window.location.pathname;
-        return p.startsWith('/dashboard') || p === '/timeline';
+        return p === '/dashboard' || p === '/dashboard/timeline' || p === '/timeline';
     }
 
     function apiFetch(url, opts) {
