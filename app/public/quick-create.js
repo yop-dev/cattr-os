@@ -158,6 +158,151 @@
         btn.style.cursor = ready ? 'pointer' : 'not-allowed';
     }
 
+    // --- Defaults ---
+
+    var defaultPriorityId = null;
+    var defaultStatusId = null;
+
+    function fetchDefaults() {
+        var pFetch = apiFetch('/api/priorities/list')
+            .then(function (r) { return r.json(); })
+            .then(function (data) {
+                var rows = (data && data.data) ? data.data : [];
+                var normal = rows.filter(function (x) { return x.name && x.name.toLowerCase() === 'normal'; })[0];
+                defaultPriorityId = normal ? normal.id : (rows[0] ? rows[0].id : null);
+            })
+            .catch(function () {});
+
+        var sFetch = apiFetch('/api/statuses/list')
+            .then(function (r) { return r.json(); })
+            .then(function (data) {
+                var rows = (data && data.data) ? data.data : [];
+                var open = rows.filter(function (x) { return x.name && x.name.toLowerCase() === 'open'; })[0];
+                defaultStatusId = open ? open.id : (rows[0] ? rows[0].id : null);
+            })
+            .catch(function () {});
+
+        return Promise.all([pFetch, sFetch]);
+    }
+
+    // --- Submit ---
+
+    function clearMessage() {
+        var msg = document.getElementById('qc-message');
+        if (msg) msg.style.display = 'none';
+    }
+
+    function showSuccess() {
+        var taskInput = document.getElementById('qc-task-name');
+        if (taskInput) {
+            taskInput.value = '';
+            taskInput.style.borderColor = '#d0d5dd';
+        }
+        selectedProject = null;
+        updateSubmitButton();
+
+        var msg = document.getElementById('qc-message');
+        if (msg) {
+            msg.style.display = 'flex';
+            msg.style.alignItems = 'center';
+            msg.style.gap = '6px';
+            msg.style.color = '#27ae60';
+            msg.innerHTML = '<span style="font-size:16px;">&#10003;</span> Task created — open desktop app to start';
+            setTimeout(function () { if (msg) msg.style.display = 'none'; }, 3000);
+        }
+    }
+
+    function showError(message) {
+        var msg = document.getElementById('qc-message');
+        if (!msg) return;
+        msg.style.display = 'flex';
+        msg.style.alignItems = 'center';
+        msg.style.gap = '6px';
+        msg.style.color = '#e04f4f';
+        msg.textContent = message;
+    }
+
+    function setLoading(loading) {
+        var btn = document.getElementById('qc-submit');
+        if (!btn) return;
+        if (loading) {
+            btn.disabled = true;
+            btn.textContent = 'Adding…';
+            btn.style.cursor = 'not-allowed';
+            btn.style.background = '#7fa8e8';
+        } else {
+            btn.textContent = 'Add Task';
+            updateSubmitButton();
+        }
+    }
+
+    function handleSubmit() {
+        var taskInput = document.getElementById('qc-task-name');
+        if (!taskInput || !selectedProject) return;
+
+        var taskName = taskInput.value.trim();
+        if (!taskName) return;
+
+        clearMessage();
+        setLoading(true);
+
+        var proj = selectedProject;
+
+        function createTask(projectId) {
+            var payload = {
+                task_name: taskName,
+                project_id: Number(projectId),
+                priority_id: defaultPriorityId,
+                status_id: defaultStatusId,
+                description: null,
+            };
+            return apiFetch('/api/tasks/create', {
+                method: 'POST',
+                body: JSON.stringify(payload),
+            }).then(function (r) {
+                if (r.status === 403) {
+                    throw new Error('You don\'t have permission to create tasks in this project.');
+                }
+                if (!r.ok) {
+                    return r.json().then(function (body) {
+                        throw new Error((body && body.message) ? body.message : 'Failed to create task. Please try again.');
+                    }).catch(function (e) {
+                        if (e instanceof Error) throw e;
+                        throw new Error('Failed to create task. Please try again.');
+                    });
+                }
+                return r.json();
+            });
+        }
+
+        var taskPromise;
+
+        if (proj.isNew) {
+            taskPromise = apiFetch('/api/projects/create', {
+                method: 'POST',
+                body: JSON.stringify({ name: proj.name }),
+            }).then(function (r) {
+                if (!r.ok) throw new Error('Failed to create project. Please try again.');
+                return r.json();
+            }).then(function (data) {
+                var newId = data && data.data && data.data.id;
+                if (!newId) throw new Error('Failed to create project. Please try again.');
+                fetchProjects();
+                return createTask(newId);
+            });
+        } else {
+            taskPromise = createTask(proj.id);
+        }
+
+        taskPromise.then(function () {
+            setLoading(false);
+            showSuccess();
+        }).catch(function (err) {
+            setLoading(false);
+            showError((err && err.message) ? err.message : 'Connection error. Check your network and try again.');
+        });
+    }
+
     // --- Render ---
 
     function render() {
@@ -238,6 +383,10 @@
         });
         filterInput.addEventListener('click', function (e) { e.stopPropagation(); });
 
+        // Submit → create task
+        var submitBtn = wrapper.querySelector('#qc-submit');
+        submitBtn.addEventListener('click', handleSubmit);
+
         // Outside click → close
         if (!docListenerAttached) {
             document.addEventListener('click', closeDropdown);
@@ -245,6 +394,7 @@
         }
 
         fetchProjects();
+        fetchDefaults();
     }
 
     // --- SPA Route Handling ---
