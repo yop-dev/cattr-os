@@ -33,6 +33,8 @@
             // (Members has hideForMobile:true so lt-500 drops from 3 to 2).
             'body.dn-on-projects .crud__table { --grid-columns-gt-1620: repeat(3, minmax(75px, 1fr)) 1fr !important; --grid-columns-lt-1620: repeat(3, minmax(75px, 1fr)) 3fr !important; --grid-columns-lt-1200: repeat(3, minmax(75px, 1fr)) 0.5fr !important; --grid-columns-lt-500: repeat(2, minmax(75px, 1fr)) 0.5fr !important; }',
             'body.dn-on-projects .at-table tr > *:nth-child(2) { display: none !important; }',
+            // Timeline page — hide Add Time and Import buttons from the controls row
+            'body.dn-on-timeline .controls-row { display: none !important; }',
         ].join('\n');
         document.head.appendChild(style);
     }
@@ -133,6 +135,14 @@
         } else {
             document.body.classList.remove('dn-on-tasks');
         }
+
+        var p = window.location.pathname;
+        var isTimeline = p === '/dashboard' || p === '/dashboard/timeline' || p === '/timeline' || p === '/';
+        if (isTimeline) {
+            document.body.classList.add('dn-on-timeline');
+        } else {
+            document.body.classList.remove('dn-on-timeline');
+        }
     }
 
     // Replace the Projects dropdown (Projects + Project Groups) with a single direct link to /projects.
@@ -222,6 +232,34 @@
         table.parentNode.insertBefore(hint, table.nextSibling);
     }
 
+    function limitTaskAvatars() {
+        if (window.location.pathname !== '/tasks') return;
+
+        // Tasks renders users as: div.flex.flex-gap.flex-wrap > [AtTooltip per user]
+        // Unlike Projects which uses TeamAvatars component (limits to 2 natively),
+        // Tasks renders all users untruncated — we clamp here to match.
+        var containers = document.querySelectorAll('.flex.flex-gap.flex-wrap');
+        for (var i = 0; i < containers.length; i++) {
+            var container = containers[i];
+            if (container.querySelector('.dn-extra-badge')) continue;
+
+            var children = container.children;
+            if (children.length <= 2) continue;
+
+            var extra = children.length - 2;
+            for (var j = children.length - 1; j >= 2; j--) {
+                children[j].style.display = 'none';
+            }
+
+            var badge = document.createElement('div');
+            badge.className = 'dn-extra-badge';
+            badge.textContent = '+' + extra;
+            // Mirror team-avatars__placeholder styles (scoped CSS can't reach injected nodes)
+            badge.style.cssText = 'display:flex;align-items:center;justify-content:center;width:30px;height:30px;border-radius:5px;background-color:#9e9e9e;color:#eee;font:12px/30px Helvetica,Arial,sans-serif;text-align:center;flex-shrink:0;cursor:default;margin:0.125rem;';
+            container.appendChild(badge);
+        }
+    }
+
     function tick() {
         lockToTimeline();
         injectTeamLink();
@@ -229,6 +267,7 @@
         patchDashboardLink();
         updateActiveState();
         injectTasksHint();
+        limitTaskAvatars();
     }
 
     function init() {

@@ -13,6 +13,7 @@ All planned changes and known bugs for the Cattr deployment. Customisations are 
 | C-003 | Admin correct time on behalf of employees | ✅ Partial | — |
 | C-004 | Admin edit existing time entry (adjust end time) | ⏳ Pending | Medium |
 | C-009 | Quick-create task/project bar on dashboard | ✅ Done | Medium |
+| C-010 | Dashboard nav restructure — Team to header, Projects direct link, Tasks/Projects cleanup | ✅ Done | Medium |
 
 ---
 
@@ -271,6 +272,75 @@ A standalone IIFE injected into the app shell. Zero dependencies, matches Cattr'
 - [x] Submit with empty task name → button disabled (blocked) ✅
 - [x] Navigate to Projects page and back → bar re-renders cleanly ✅
 - [x] Auto-focus on render, Enter to submit, Enter/Escape in dropdown, hover state ✅
+
+---
+
+### C-010 — Dashboard nav restructure
+
+**Status:** ✅ Done — confirmed working 2026-05-06
+**Priority:** Medium
+
+#### What was done
+
+All implemented in `app/public/dashboard-nav.js` (new standalone IIFE, injected via `app.blade.php` + `Dockerfile`). Uses MutationObserver + body class scoping, same pattern as `quick-create.js`.
+
+**Team tab moved to header nav**
+- `.dashboard__routes` (built-in Timeline/Team tab bar) hidden globally
+- `<li id="dn-team-nav-item">` injected into AT-UI header nav after Dashboard item
+- Visible only to Admin/Manager/Auditor (`user.can_view_team_tab`); hidden for Employee
+- `localStorage.dashboard.tab` locked to `'timeline'` at all times except when on Team page — defeats compiled router's `beforeEnter` guard that would otherwise redirect `/dashboard` to Team
+- Dashboard nav link patched with a capture-phase listener to always push `dashboard.timeline` (AT-UI suppresses clicks on already-active parent nav items)
+
+**Projects dropdown replaced with direct link**
+- Projects submenu (Projects + Project Groups) hidden; plain `<li id="dn-projects-link">` injected before it
+- Group column hidden on Projects list page via CSS grid template override + `tr > *:nth-child(2)` selector
+
+**Tasks page**
+- Rows 6+ hidden; pagination hidden
+- Hint text injected below table: "Showing 5 most recent tasks. Use the search above to find others."
+- User avatars capped at 2 + "+N" badge — the Tasks page renders all users in `div.flex.flex-gap.flex-wrap` (no built-in truncation, unlike the Projects page which uses `TeamAvatars` component); badge styled to match `team-avatars__placeholder`
+
+**Dashboard timeline page**
+- Add Time and Import buttons hidden (`body.dn-on-timeline .controls-row { display: none }`)
+- `margin-bottom: 20px` added to quick-create bar wrapper for spacing
+
+#### Files Modified
+
+| File | Change |
+|---|---|
+| `app/public/dashboard-nav.js` | New file — all C-010 logic |
+| `app/public/quick-create.js` | `isOnDashboard()` path fix + margin-bottom on wrapper |
+| `app/resources/views/app.blade.php` | Added `<script src="/dashboard-nav.js"></script>` |
+| `Dockerfile` | Added `COPY app/public/dashboard-nav.js` |
+
+---
+
+## Deferred Ideas
+
+Ideas that were explored but parked — context preserved so they can be resumed.
+
+---
+
+### IDEA-001 — Start web timer that triggers desktop app screenshot capture
+
+**Status:** ⏳ Deferred — 2026-05-06
+**Goal:** User clicks Start on the web dashboard and the desktop app begins capturing screenshots automatically, without the user switching to the desktop app.
+
+#### What was investigated
+
+**Option A — `cattr://` deep link**
+The Cattr desktop app (Electron, v3.0.0-RC14) does register `cattr://` as a system URI scheme via `app.setAsDefaultProtocolClient('cattr')`. However, the only action it handles is `cattr://authenticate` (SSO login). There is no `cattr://start-timer` handler. Adding one would require modifying and redistributing the desktop app — ruled out due to distribution friction for a 10-person team.
+
+**Option B — Browser-based screen capture (`getDisplayMedia()`)**
+Modern browsers can capture the screen and upload periodic screenshots directly to the server (same endpoints the desktop agent uses). No desktop app required for this flow. Ruled out because the browser tab must remain open and visible while tracking — not acceptable for the team's workflow.
+
+#### Why it's parked
+Neither option is clean enough. Option A requires distributing a patched `.exe` to every user. Option B requires the browser tab to stay open.
+
+#### When to revisit
+- If the upstream Cattr desktop app adds a `cattr://start-timer` URI handler natively
+- If a future version of the desktop agent exposes a local HTTP endpoint or WebSocket
+- If the team's workflow shifts to browser-first and keeping the tab open becomes acceptable
 
 ---
 
