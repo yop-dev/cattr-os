@@ -24,6 +24,9 @@
             '#dn-projects-link > .at-menu__item-link.dn-active { color: #2e2ef9 !important; }',
             '#dn-projects-link > .at-menu__item-link::after { content: ""; position: absolute; bottom: -0.75em; left: 0; width: 100%; height: 3px; background: currentColor; display: none; }',
             '#dn-projects-link > .at-menu__item-link.dn-active::after { display: block; }',
+            // Tasks list — show only first 5 rows, hide pagination
+            'body.dn-on-tasks .at-table__body tr:nth-child(n+6) { display: none !important; }',
+            'body.dn-on-tasks .at-pagination { display: none !important; }',
             // Projects list — hide Group column (always 2nd column, hardcoded in module.init.js).
             // Override grid template custom properties with !important so they beat Vue's inline styles.
             // Values derived from GridView.vue cssVarsForGridCols with columns.length reduced from 4 to 3
@@ -124,6 +127,12 @@
         } else {
             document.body.classList.remove('dn-on-projects');
         }
+
+        if (window.location.pathname === '/tasks') {
+            document.body.classList.add('dn-on-tasks');
+        } else {
+            document.body.classList.remove('dn-on-tasks');
+        }
     }
 
     // Replace the Projects dropdown (Projects + Project Groups) with a single direct link to /projects.
@@ -195,12 +204,31 @@
         }
     }
 
+    function injectTasksHint() {
+        if (window.location.pathname !== '/tasks') {
+            var existing = document.getElementById('dn-tasks-hint');
+            if (existing) existing.parentNode.removeChild(existing);
+            return;
+        }
+        if (document.getElementById('dn-tasks-hint')) return;
+
+        var table = document.querySelector('.crud__table .at-table');
+        if (!table) return;
+
+        var hint = document.createElement('p');
+        hint.id = 'dn-tasks-hint';
+        hint.style.cssText = 'text-align:center; color:#b1b1be; font-size:13px; margin:12px 0 0;';
+        hint.textContent = 'Showing 5 most recent tasks. Use the search above to find others.';
+        table.parentNode.insertBefore(hint, table.nextSibling);
+    }
+
     function tick() {
         lockToTimeline();
         injectTeamLink();
         flattenProjectsDropdown();
         patchDashboardLink();
         updateActiveState();
+        injectTasksHint();
     }
 
     function init() {
