@@ -13,7 +13,12 @@
             '.dn-team-link.dn-active { color: #2e2ef9 !important; }',
             '.dn-team-link::after { content: ""; position: absolute; bottom: -0.75em; left: 0; width: 100%; height: 3px; background: currentColor; display: none; }',
             '.dn-team-link.dn-active::after { display: block; }',
-            'body.dn-on-team .at-menu__item-link:not(.dn-team-link).router-link-active::after { display: none !important; }',
+            // AT-UI drives active state via at-menu__item--active on <li> AND router-link-active on <a>.
+            // Suppress both color and underline on Dashboard when Team is active.
+            'body.dn-on-team .at-menu__item:not(#dn-team-nav-item).at-menu__item--active > .at-menu__item-link { color: inherit !important; }',
+            'body.dn-on-team .at-menu__item:not(#dn-team-nav-item).at-menu__item--active > .at-menu__item-link::after { display: none !important; }',
+            'body.dn-on-team .at-menu__item:not(#dn-team-nav-item) > .at-menu__item-link.router-link-active { color: inherit !important; }',
+            'body.dn-on-team .at-menu__item:not(#dn-team-nav-item) > .at-menu__item-link.router-link-active::after { display: none !important; }',
         ].join('\n');
         document.head.appendChild(style);
     }
@@ -79,13 +84,17 @@
     }
 
     function updateActiveState() {
+        // dn-on-team must be set regardless of whether the team link is in the DOM yet
+        if (isOnTeamPage()) {
+            document.body.classList.add('dn-on-team');
+        } else {
+            document.body.classList.remove('dn-on-team');
+        }
         var teamLink = document.querySelector('.dn-team-link');
         if (!teamLink) return;
         if (isOnTeamPage()) {
-            document.body.classList.add('dn-on-team');
             teamLink.classList.add('dn-active');
         } else {
-            document.body.classList.remove('dn-on-team');
             teamLink.classList.remove('dn-active');
         }
     }
