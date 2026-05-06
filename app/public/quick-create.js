@@ -7,6 +7,7 @@
     var projects = [];
     var selectedProject = null;
     var filterText = '';
+    var docListenerAttached = false;
 
     // --- Utilities ---
 
@@ -52,6 +53,17 @@
 
     // --- Dropdown ---
 
+    function projectItemHtml(p) {
+        return '<div class="qc-project-item"'
+            + ' data-id="' + escHtml(String(p.id)) + '"'
+            + ' data-name="' + escHtml(p.name) + '"'
+            + ' data-color="' + escHtml(p.color) + '"'
+            + ' style="padding:8px 12px;display:flex;align-items:center;gap:8px;cursor:pointer;">'
+            + '<span style="width:8px;height:8px;border-radius:50%;background:' + escHtml(p.color) + ';display:inline-block;flex-shrink:0;"></span>'
+            + '<span style="font-size:13px;color:#222;">' + escHtml(p.name) + '</span>'
+            + '</div>';
+    }
+
     function renderDropdown() {
         var dropdown = document.getElementById('qc-dropdown');
         if (!dropdown) return;
@@ -64,16 +76,7 @@
         var html = '';
 
         if (matched.length > 0) {
-            html += matched.map(function (p) {
-                return '<div class="qc-project-item"'
-                    + ' data-id="' + escHtml(String(p.id)) + '"'
-                    + ' data-name="' + escHtml(p.name) + '"'
-                    + ' data-color="' + escHtml(p.color) + '"'
-                    + ' style="padding:8px 12px;display:flex;align-items:center;gap:8px;cursor:pointer;">'
-                    + '<span style="width:8px;height:8px;border-radius:50%;background:' + escHtml(p.color) + ';display:inline-block;flex-shrink:0;"></span>'
-                    + '<span style="font-size:13px;color:#222;">' + escHtml(p.name) + '</span>'
-                    + '</div>';
-            }).join('');
+            html += matched.map(projectItemHtml).join('');
         } else if (filter.length > 0) {
             html += '<div style="padding:8px 12px;font-size:12px;color:#bbb;font-style:italic;">No matching projects</div>';
         }
@@ -87,16 +90,7 @@
         }
 
         if (!html) {
-            html = projects.map(function (p) {
-                return '<div class="qc-project-item"'
-                    + ' data-id="' + escHtml(String(p.id)) + '"'
-                    + ' data-name="' + escHtml(p.name) + '"'
-                    + ' data-color="' + escHtml(p.color) + '"'
-                    + ' style="padding:8px 12px;display:flex;align-items:center;gap:8px;cursor:pointer;">'
-                    + '<span style="width:8px;height:8px;border-radius:50%;background:' + escHtml(p.color) + ';display:inline-block;flex-shrink:0;"></span>'
-                    + '<span style="font-size:13px;color:#222;">' + escHtml(p.name) + '</span>'
-                    + '</div>';
-            }).join('') || '<div style="padding:8px 12px;font-size:12px;color:#bbb;font-style:italic;">No projects yet</div>';
+            html = projects.map(projectItemHtml).join('') || '<div style="padding:8px 12px;font-size:12px;color:#bbb;font-style:italic;">No projects yet</div>';
         }
 
         dropdown.innerHTML = html;
@@ -245,7 +239,10 @@
         filterInput.addEventListener('click', function (e) { e.stopPropagation(); });
 
         // Outside click → close
-        document.addEventListener('click', closeDropdown);
+        if (!docListenerAttached) {
+            document.addEventListener('click', closeDropdown);
+            docListenerAttached = true;
+        }
 
         fetchProjects();
     }
@@ -259,6 +256,8 @@
             var existing = document.getElementById(BAR_ID);
             if (existing && existing.parentNode) existing.parentNode.removeChild(existing);
             selectedProject = null;
+            filterText = '';
+            docListenerAttached = false;
         }
     }
 
