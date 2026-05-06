@@ -29,7 +29,7 @@
             // Values derived from GridView.vue cssVarsForGridCols with columns.length reduced from 4 to 3
             // (Members has hideForMobile:true so lt-500 drops from 3 to 2).
             'body.dn-on-projects .crud__table { --grid-columns-gt-1620: repeat(3, minmax(75px, 1fr)) 1fr !important; --grid-columns-lt-1620: repeat(3, minmax(75px, 1fr)) 3fr !important; --grid-columns-lt-1200: repeat(3, minmax(75px, 1fr)) 0.5fr !important; --grid-columns-lt-500: repeat(2, minmax(75px, 1fr)) 0.5fr !important; }',
-            'body.dn-on-projects .at-table__header th:nth-child(2), body.dn-on-projects .at-table__body td:nth-child(2) { display: none !important; }',
+            'body.dn-on-projects .at-table tr > *:nth-child(2) { display: none !important; }',
         ].join('\n');
         document.head.appendChild(style);
     }
