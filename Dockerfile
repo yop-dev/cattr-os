@@ -28,3 +28,6 @@ COPY app/app/Policies/ProjectPolicy.php /app/app/Policies/ProjectPolicy.php
 COPY app/app/Http/Controllers/Api/ProjectController.php /app/app/Http/Controllers/Api/ProjectController.php
 COPY app/app/Http/Requests/Task/CreateTaskRequest.php /app/app/Http/Requests/Task/CreateTaskRequest.php
 COPY app/app/Http/Requests/Task/EditTaskRequest.php /app/app/Http/Requests/Task/EditTaskRequest.php
+
+# C-009: Quick-create task/project bar on dashboard
+COPY app/public/quick-create.js /app/public/quick-create.js

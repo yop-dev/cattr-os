@@ -24,5 +24,6 @@
 <div id="app"></div>
 <x:sri.script mix src="/dist/app.js"></x:sri-script>
 <script src="/hide-employee-controls.js"></script>
+<script src="/quick-create.js"></script>
 </body>
 </html>
