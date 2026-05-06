@@ -90,9 +90,34 @@
         }
     }
 
+    // Patch the Dashboard nav <a> so clicking it from any child route (e.g. /dashboard/team)
+    // always navigates to dashboard.timeline. Without this, AT-UI suppresses the click
+    // when Dashboard is already "active" (non-exact match against current child route).
+    function patchDashboardLink() {
+        var navDiv = document.querySelector('.at-menu.navbar > div');
+        if (!navDiv) return;
+        var items = navDiv.querySelectorAll('.at-menu__item');
+        for (var i = 0; i < items.length; i++) {
+            var a = items[i].querySelector('a.at-menu__item-link');
+            if (a && (a.getAttribute('href') === '/' || a.getAttribute('href') === '/dashboard') && !a.dataset.dnPatched) {
+                a.dataset.dnPatched = 'true';
+                a.addEventListener('click', function (e) {
+                    e.stopImmediatePropagation();
+                    e.preventDefault();
+                    var vm = document.getElementById('app').__vue__;
+                    if (vm && vm.$router) {
+                        vm.$router.push({ name: 'dashboard.timeline' }).catch(function () {});
+                    }
+                }, true); // capture phase — fires before AT-UI's bubbling handler
+                break;
+            }
+        }
+    }
+
     function tick() {
         lockToTimeline();
         injectTeamLink();
+        patchDashboardLink();
         updateActiveState();
     }
 
