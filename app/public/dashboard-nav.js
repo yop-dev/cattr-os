@@ -9,16 +9,21 @@
         style.id = 'dn-styles';
         style.textContent = [
             '.dashboard__routes { display: none !important; }',
+            // Team link active state
             '.dn-team-link { position: relative; }',
             '.dn-team-link.dn-active { color: #2e2ef9 !important; }',
             '.dn-team-link::after { content: ""; position: absolute; bottom: -0.75em; left: 0; width: 100%; height: 3px; background: currentColor; display: none; }',
             '.dn-team-link.dn-active::after { display: block; }',
-            // AT-UI drives active state via at-menu__item--active on <li> AND router-link-active on <a>.
-            // Suppress both color and underline on Dashboard when Team is active.
+            // Suppress Dashboard active state when on Team page (AT-UI uses both at-menu__item--active on <li> and router-link-active on <a>)
             'body.dn-on-team .at-menu__item:not(#dn-team-nav-item).at-menu__item--active > .at-menu__item-link { color: inherit !important; }',
             'body.dn-on-team .at-menu__item:not(#dn-team-nav-item).at-menu__item--active > .at-menu__item-link::after { display: none !important; }',
             'body.dn-on-team .at-menu__item:not(#dn-team-nav-item) > .at-menu__item-link.router-link-active { color: inherit !important; }',
             'body.dn-on-team .at-menu__item:not(#dn-team-nav-item) > .at-menu__item-link.router-link-active::after { display: none !important; }',
+            // Projects direct link active state
+            '#dn-projects-link > .at-menu__item-link { position: relative; }',
+            '#dn-projects-link > .at-menu__item-link.dn-active { color: #2e2ef9 !important; }',
+            '#dn-projects-link > .at-menu__item-link::after { content: ""; position: absolute; bottom: -0.75em; left: 0; width: 100%; height: 3px; background: currentColor; display: none; }',
+            '#dn-projects-link > .at-menu__item-link.dn-active::after { display: block; }',
         ].join('\n');
         document.head.appendChild(style);
     }
@@ -91,12 +96,67 @@
             document.body.classList.remove('dn-on-team');
         }
         var teamLink = document.querySelector('.dn-team-link');
-        if (!teamLink) return;
-        if (isOnTeamPage()) {
-            teamLink.classList.add('dn-active');
-        } else {
-            teamLink.classList.remove('dn-active');
+        if (teamLink) {
+            if (isOnTeamPage()) {
+                teamLink.classList.add('dn-active');
+            } else {
+                teamLink.classList.remove('dn-active');
+            }
         }
+
+        var projectsLink = document.querySelector('#dn-projects-link > .at-menu__item-link');
+        if (projectsLink) {
+            if (window.location.pathname.startsWith('/projects')) {
+                projectsLink.classList.add('dn-active');
+            } else {
+                projectsLink.classList.remove('dn-active');
+            }
+        }
+    }
+
+    // Replace the Projects dropdown (Projects + Project Groups) with a single direct link to /projects.
+    function flattenProjectsDropdown() {
+        if (document.getElementById('dn-projects-link')) return;
+
+        var navDiv = document.querySelector('.at-menu.navbar > div');
+        if (!navDiv) return;
+
+        // The Projects submenu renders as <li class="at-menu__item at-menu__submenu">
+        var submenus = navDiv.querySelectorAll('.at-menu__submenu');
+        var projectsSubmenu = null;
+        for (var i = 0; i < submenus.length; i++) {
+            var title = submenus[i].querySelector('.at-menu__submenu-title');
+            if (title && title.textContent.trim().toLowerCase().indexOf('project') >= 0) {
+                projectsSubmenu = submenus[i];
+                break;
+            }
+        }
+        if (!projectsSubmenu) return;
+
+        // Hide the original dropdown
+        projectsSubmenu.style.display = 'none';
+
+        // Inject a plain link before it
+        var li = document.createElement('li');
+        li.id = 'dn-projects-link';
+        li.className = 'at-menu__item';
+
+        var a = document.createElement('a');
+        a.className = 'at-menu__item-link';
+        a.href = '/projects';
+        a.textContent = 'Projects';
+        a.addEventListener('click', function (e) {
+            e.preventDefault();
+            var vm = document.getElementById('app').__vue__;
+            if (vm && vm.$router) {
+                vm.$router.push({ name: 'Projects.crud.projects' }).catch(function () {});
+            } else {
+                window.location.href = '/projects';
+            }
+        });
+
+        li.appendChild(a);
+        projectsSubmenu.parentNode.insertBefore(li, projectsSubmenu);
     }
 
     // Patch the Dashboard nav <a> so clicking it from any child route (e.g. /dashboard/team)
@@ -126,6 +186,7 @@
     function tick() {
         lockToTimeline();
         injectTeamLink();
+        flattenProjectsDropdown();
         patchDashboardLink();
         updateActiveState();
     }
