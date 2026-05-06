@@ -37,6 +37,15 @@
             .replace(/"/g, '&quot;');
     }
 
+    function getCurrentUserId() {
+        var el = document.getElementById('app');
+        var vm = el && el.__vue__;
+        var store = vm ? vm.$store : null;
+        if (!store) return null;
+        var user = store.getters['user/user'];
+        return (user && user.id) ? user.id : null;
+    }
+
     // --- Data ---
 
     function fetchProjects() {
@@ -248,6 +257,7 @@
         var proj = selectedProject;
 
         function createTask(projectId) {
+            var userId = getCurrentUserId();
             var payload = {
                 task_name: taskName,
                 project_id: Number(projectId),
@@ -255,6 +265,7 @@
                 status_id: defaultStatusId,
                 description: null,
             };
+            if (userId) payload.users = [userId];
             return apiFetch('/api/tasks/create', {
                 method: 'POST',
                 body: JSON.stringify(payload),
