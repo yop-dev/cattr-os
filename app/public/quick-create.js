@@ -290,9 +290,16 @@
         if (proj.isNew) {
             taskPromise = apiFetch('/api/projects/create', {
                 method: 'POST',
-                body: JSON.stringify({ name: proj.name }),
+                body: JSON.stringify({ name: proj.name, description: proj.name, screenshots_state: -1 }),
             }).then(function (r) {
-                if (!r.ok) throw new Error('Failed to create project. Please try again.');
+                if (!r.ok) {
+                    return r.json().then(function (body) {
+                        throw new Error((body && body.message) ? body.message : 'Failed to create project. Please try again.');
+                    }).catch(function (e) {
+                        if (e instanceof Error) throw e;
+                        throw new Error('Failed to create project. Please try again.');
+                    });
+                }
                 return r.json();
             }).then(function (data) {
                 var newId = data && data.data && data.data.id;
@@ -370,11 +377,22 @@
 
         target.insertBefore(wrapper, target.firstChild);
 
+        setTimeout(function () {
+            var t = document.getElementById('qc-task-name');
+            if (t) t.focus();
+        }, 150);
+
         // Task name → update button state
         var taskInput = wrapper.querySelector('#qc-task-name');
         taskInput.addEventListener('input', updateSubmitButton);
         taskInput.addEventListener('focus', function () { taskInput.style.borderColor = '#2d6ae0'; });
         taskInput.addEventListener('blur', function () { if (!taskInput.value.trim()) taskInput.style.borderColor = '#d0d5dd'; });
+        taskInput.addEventListener('keydown', function (e) {
+            if (e.key === 'Enter') {
+                var btn = document.getElementById('qc-submit');
+                if (btn && !btn.disabled) btn.click();
+            }
+        });
 
         // Selector face → toggle dropdown
         var selectorFace = wrapper.querySelector('#qc-selector-face');
@@ -387,6 +405,8 @@
                 openDropdown();
             }
         });
+        selectorFace.addEventListener('mouseenter', function () { selectorFace.style.background = '#f5f8ff'; });
+        selectorFace.addEventListener('mouseleave', function () { selectorFace.style.background = ''; });
 
         // Filter input → re-render dropdown
         var filterInput = wrapper.querySelector('#qc-filter-input');
@@ -395,6 +415,13 @@
             renderDropdown();
         });
         filterInput.addEventListener('click', function (e) { e.stopPropagation(); });
+        filterInput.addEventListener('keydown', function (e) {
+            if (e.key === 'Enter') {
+                var createItem = document.querySelector('#qc-dropdown .qc-create-item');
+                if (createItem) createItem.click();
+            }
+            if (e.key === 'Escape') closeDropdown();
+        });
 
         // Submit → create task
         var submitBtn = wrapper.querySelector('#qc-submit');
