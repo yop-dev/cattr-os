@@ -12,6 +12,7 @@ All planned changes and known bugs for the Cattr deployment. Customisations are 
 | C-002 | Allow employees to create projects/tasks | ✅ Done | High |
 | C-003 | Admin correct time on behalf of employees | ✅ Partial | — |
 | C-004 | Admin edit existing time entry (adjust end time) | ⏳ Pending | Medium |
+| C-009 | Quick-create task/project bar on dashboard | ✅ Done | Medium |
 
 ---
 
@@ -212,6 +213,64 @@ The backend already supports editing — `EditTimeIntervalRequest` calls `$user-
 - [ ] Admin opens a time entry → edit form appears → change end time → save
 - [ ] Confirm updated duration appears correctly in reports
 - [ ] Confirm original screenshot is still associated after edit
+
+---
+
+### C-009 — Quick-create task/project bar on dashboard
+
+**Status:** ✅ Done — confirmed working 2026-05-06
+**Priority:** Medium
+
+#### Requirement
+
+A Clockify-style quick-create bar pinned at the top of the dashboard page. All user roles (Admin, Manager, Employee, Auditor) can type a task name, select or create a project, and click **Add Task** to create the task without leaving the page. After creation the task is immediately available in the desktop app for users to start tracking from there.
+
+The creator is automatically assigned to the task. No timer functionality — tracking starts from the desktop app.
+
+#### What was done
+
+**Frontend — `app/public/quick-create.js`** (new file, ~440 lines)
+
+A standalone IIFE injected into the app shell. Zero dependencies, matches Cattr's AT-UI design. Features:
+- Task name input + project combobox + Add Task button rendered between the nav bar and dashboard content (`.content-wrapper` injection point)
+- `MutationObserver` on `document.body` handles SPA route transitions — bar injects on dashboard routes (`/dashboard*`, `/timeline`), is removed on navigation away, and re-injects cleanly on return
+- `GET /api/projects/list` fetched once on render, cached in memory, filtered as user types
+- Unknown project name shows `+ Create "[name]"` option → `POST /api/projects/create` → `POST /api/tasks/create`
+- `GET /api/priorities/list` + `GET /api/statuses/list` called once to resolve "Normal" priority ID and "Open" status ID
+- Creator auto-assigned via `users: [getCurrentUserId()]` in task create payload — reads current user from `document.getElementById('app').__vue__.$store.getters['user/user']`
+- Success state clears task name, retains project selection (convenient for multi-task entry), shows fading green confirmation
+- Inline error display for API failures, network errors, and 403s
+- Add Task button disabled until both task name and project are selected
+- Loading state disables both inputs and button during in-flight requests
+- Auto-focuses task name input on render; Enter key submits from task name field; Enter selects `+ Create` option in dropdown; Escape closes dropdown; hover state on project selector face
+- `docListenerAttached` flag prevents accumulating `document.click` listeners across SPA navigations
+
+**Project create payload** requires `name`, `description`, and `screenshots_state` (enum int: -1=ANY). Discovered via `CreateProjectRequest.php` — omitting either of the last two fields returns 422.
+
+**`app/resources/views/app.blade.php`** — `<script src="/quick-create.js"></script>` added.
+
+**`Dockerfile`** — `COPY app/public/quick-create.js /app/public/quick-create.js` added.
+
+#### Files Modified
+
+| File | Tracked location |
+|---|---|
+| `app/public/quick-create.js` | [yop-dev/cattr-os](https://github.com/yop-dev/cattr-os) |
+| `app/resources/views/app.blade.php` | [yop-dev/cattr-os](https://github.com/yop-dev/cattr-os) |
+| `Dockerfile` | [yop-dev/cattr-os](https://github.com/yop-dev/cattr-os) |
+
+#### Test
+
+- [x] Dashboard → bar renders between nav and timeline content ✅
+- [x] Open project dropdown → project list loads ✅
+- [x] Type partial project name → list filters ✅
+- [x] Type unknown name → `+ Create "[name]"` option appears ✅
+- [x] Select existing project + click Add Task → task created → desktop app shows task ✅
+- [x] Type new project name + select `+ Create` + click Add Task → project and task created → desktop app shows both ✅
+- [x] Created task auto-assigned to current user → task appears immediately in desktop app task list ✅
+- [x] Submit with empty task name → button disabled (blocked) ✅
+- [x] Navigate to Projects page and back → bar re-renders cleanly ✅
+- [x] Auto-focus on render, Enter to submit, Enter/Escape in dropdown, hover state ✅
 
 ---
 
