@@ -198,7 +198,6 @@
             taskInput.value = '';
             taskInput.style.borderColor = '#d0d5dd';
         }
-        selectedProject = null;
         updateSubmitButton();
 
         var msg = document.getElementById('qc-message');
@@ -299,7 +298,10 @@
             showSuccess();
         }).catch(function (err) {
             setLoading(false);
-            showError((err && err.message) ? err.message : 'Connection error. Check your network and try again.');
+            var msg = (err instanceof TypeError)
+                ? 'Connection error. Check your network and try again.'
+                : ((err && err.message) ? err.message : 'Connection error. Check your network and try again.');
+            showError(msg);
         });
     }
 
