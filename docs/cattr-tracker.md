@@ -14,6 +14,8 @@ All planned changes and known bugs for the Cattr deployment. Customisations are 
 | C-004 | Admin edit existing time entry (adjust end time) | ⏳ Pending | Medium |
 | C-009 | Quick-create task/project bar on dashboard | ✅ Done | Medium |
 | C-010 | Dashboard nav restructure — Team to header, Projects direct link, Tasks/Projects cleanup | ✅ Done | Medium |
+| C-011 | All users can see all projects (prevent duplicate project creation) | ✅ Done | Medium |
+| C-012 | Time interval form — lower task search to 1 char, show recommendations on focus, inline task creation | ✅ Done | Medium |
 
 ---
 
@@ -312,6 +314,113 @@ All implemented in `app/public/dashboard-nav.js` (new standalone IIFE, injected 
 | `app/public/quick-create.js` | `isOnDashboard()` path fix + margin-bottom on wrapper |
 | `app/resources/views/app.blade.php` | Added `<script src="/dashboard-nav.js"></script>` |
 | `Dockerfile` | Added `COPY app/public/dashboard-nav.js` |
+
+---
+
+### C-011 — All users can see all projects
+
+**Status:** ✅ Done — confirmed working 2026-05-06
+**Priority:** Medium
+
+#### Requirement
+
+Employees could only see projects they were explicitly assigned to. This caused duplicate projects to be created (users couldn't see an existing project with a similar name). All users should see all active projects regardless of membership.
+
+#### What was done
+
+**Backend — `app/app/Scopes/ProjectAccessScope.php`** (new override)
+
+The upstream `ProjectAccessScope` filters employees to only their own projects via `whereHas('users', fn => $q->where('user_id', $user->id))`. The override drops all filtering and returns the builder unmodified — all authenticated users see all projects:
+
+```php
+public function apply(Builder $builder, Model $model): Builder
+{
+    if (app()->runningInConsole()) { return $builder; }
+    $user = optional(request())->user();
+    throw_unless($user, new AuthorizationException);
+    // C-011: all roles can see all projects
+    return $builder;
+}
+```
+
+#### Files Modified
+
+| File | Tracked location |
+|---|---|
+| `app/app/Scopes/ProjectAccessScope.php` | [yop-dev/cattr-os](https://github.com/yop-dev/cattr-os) |
+
+#### Test
+
+- [x] Log in as employee → Projects page → all 6 active projects visible ✅
+- [x] Log in as admin → project count unchanged ✅
+
+---
+
+### C-012 — Time interval form: task search UX improvements + inline task creation
+
+**Status:** ✅ Done — confirmed working 2026-05-06
+**Priority:** Medium
+
+#### Requirement
+
+The Add Time Interval form had three friction points for admins correcting employee time:
+1. Task search required typing 3+ characters before any results appeared
+2. Clicking the task field showed "Sorry, no matching options" instead of suggestions
+3. There was no way to create a task without leaving the form
+
+#### What was done
+
+**Frontend — `app/public/time-interval-helpers.js`** (new file)
+
+Standalone IIFE injected via `app.blade.php` and `Dockerfile`. Activates only on `/time-intervals/new` and `/time-intervals/{id}`.
+
+**Search threshold lowered (3 → 1 char)**
+
+Patches `LazySelect.onSearch` after the component mounts. Original: `if (query.length >= 3) fetchTasks(query, loading)`. Replaced with `if (query.length >= 1)`.
+
+**Task recommendations on focus**
+
+`loadInitialTasks()` called on first `focusin` of the task field. Calls `POST /api/tasks/list` with `{ with: ['project'], order_by: 'task_name', order_direction: 'asc' }` — then maps results through `labelledTask()` (see below) before setting `lazySelect.options`. `_dn_initial_loaded` flag prevents redundant re-fetches; reset after inline task creation so next focus reloads a fresh list.
+
+**Placeholder override**
+
+`patchPlaceholder()` runs each MutationObserver tick. Sets `.vs__search` placeholder to `'Search tasks…'` when no task is selected (checked via `!!lazySelect.$el.querySelector('.vs__selected')`), and `''` when one is selected — prevents the compiled localization placeholder ("Type at least 3 characters to search") from showing, and prevents our custom placeholder from bleeding behind a selected value.
+
+**Inline task creation**
+
+`+ Create a new task` link injected below the task field. Clicking it opens a mini form (task name input + project dropdown + Create/Cancel). On submit:
+- `POST /api/tasks/create` with normal priority, open status, current user assigned
+- Newly created task set as the selected value via `vSelectComp.select(labelledTask(newTask))`
+- Project list pre-fetched on link render so the dropdown opens instantly
+
+#### Key technical finding — `label` field
+
+`LazySelect.fetchTasks` maps raw API task objects to add a `label` field before setting `this.options`:
+```javascript
+{ ...task, label: `${task.task_name} (${task.project.name})` }
+```
+v-select renders using `label`, not `task_name`. Any code that sets `lazySelect.options` directly (initial load, post-creation) must run results through `labelledTask()` first, and the API request must include `with: ['project']` so project name is available.
+
+`vSelectComp.select(labelledTask(task))` is used for post-creation selection (not `lazySelect.inputHandler(id)`) because only `vSelectComp.select()` triggers the full v-select → LazySelect → parent form event chain that updates both visual state and form data.
+
+#### Files Modified
+
+| File | Tracked location |
+|---|---|
+| `app/public/time-interval-helpers.js` | [yop-dev/cattr-os](https://github.com/yop-dev/cattr-os) |
+| `app/resources/views/app.blade.php` | Added `<script src="/time-interval-helpers.js"></script>` |
+| `Dockerfile` | Added `COPY app/public/time-interval-helpers.js` |
+
+#### Test
+
+- [x] Add Time Interval → task field → type 1 char → results appear ✅
+- [x] Click task field without typing → task recommendations load ✅
+- [x] Placeholder shows "Search tasks…" when nothing selected ✅
+- [x] Placeholder hidden when task is selected ✅
+- [x] `+ Create a new task` link visible below task field ✅
+- [x] Create form → enter name + select project → task created and auto-selected ✅
+- [x] After creation → click field again → full task list loads (including new task) ✅
+- [x] After creation → can clear selection and pick a different task ✅
 
 ---
 

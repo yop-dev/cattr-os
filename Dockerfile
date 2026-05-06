@@ -34,3 +34,9 @@ COPY app/public/quick-create.js /app/public/quick-create.js
 
 # C-010: Move Team tab from dashboard to header nav
 COPY app/public/dashboard-nav.js /app/public/dashboard-nav.js
+
+# C-011: All users can see all projects (prevent duplicate project creation)
+COPY app/app/Scopes/ProjectAccessScope.php /app/app/Scopes/ProjectAccessScope.php
+
+# C-012: Time interval form — lower task search to 1 char, add inline task creation
+COPY app/public/time-interval-helpers.js /app/public/time-interval-helpers.js
