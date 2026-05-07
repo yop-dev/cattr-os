@@ -430,6 +430,19 @@ Ideas that were explored but parked — context preserved so they can be resumed
 
 ---
 
+### IDEA-002 — Desktop app fork: task/project creation + web ↔ desktop timer sync
+
+**Status:** ⏳ Deferred — 2026-05-07 — waiting for team go-signal
+**Brainstorm findings:** `docs/desktop-fork-brainstorm.md`
+
+Two features scoped and designed, pending approval to start:
+1. Task/project creation modal in the desktop app (Spec 1 — low risk, no server changes)
+2. Web timer UI + bidirectional sync via polling + desktop heartbeat (Spec 2 — builds on Spec 1)
+
+See the brainstorm doc for full architecture, technical stack, implementation order, and open questions.
+
+---
+
 ### IDEA-001 — Start web timer that triggers desktop app screenshot capture
 
 **Status:** ⏳ Deferred — 2026-05-06
