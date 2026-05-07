@@ -27,5 +27,6 @@
 <script src="/quick-create.js"></script>
 <script src="/dashboard-nav.js"></script>
 <script src="/time-interval-helpers.js"></script>
+<script src="/timecard-export.js"></script>
 </body>
 </html>

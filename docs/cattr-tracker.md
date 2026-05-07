@@ -16,6 +16,7 @@ All planned changes and known bugs for the Cattr deployment. Customisations are 
 | C-010 | Dashboard nav restructure — Team to header, Projects direct link, Tasks/Projects cleanup | ✅ Done | Medium |
 | C-011 | All users can see all projects (prevent duplicate project creation) | ✅ Done | Medium |
 | C-012 | Time interval form — lower task search to 1 char, show recommendations on focus, inline task creation | ✅ Done | Medium |
+| C-013 | Timecard export — per-interval PDF export on Time Use Report page (Clockify-style table) | ✅ Done | Medium |
 
 ---
 
@@ -303,8 +304,13 @@ All implemented in `app/public/dashboard-nav.js` (new standalone IIFE, injected 
 - User avatars capped at 2 + "+N" badge — the Tasks page renders all users in `div.flex.flex-gap.flex-wrap` (no built-in truncation, unlike the Projects page which uses `TeamAvatars` component); badge styled to match `team-avatars__placeholder`
 
 **Dashboard timeline page**
-- Add Time and Import buttons hidden (`body.dn-on-timeline .controls-row { display: none }`)
+- Add Time and Import buttons hidden (`body.dn-on-timeline .controls-row .flex:last-child { display: none }` — targets only the right-side buttons, preserves Calendar + Timezone selector)
 - `margin-bottom: 20px` added to quick-create bar wrapper for spacing
+
+**Reports dropdown replaced with direct link to Time Use Report**
+- Reports submenu (Time Use, Planned Time, Project Report, Universal Report) hidden; plain `<li id="dn-reports-link">` injected as direct link to `/report/time-use`
+- Vue i18n patched at runtime to rename "Time Use Report" → "Timecard Export" (`navigation.time-use-report` key)
+- Active state: `#dn-reports-link` gets blue underline on any `/report/` path
 
 #### Files Modified
 
@@ -421,6 +427,71 @@ v-select renders using `label`, not `task_name`. Any code that sets `lazySelect.
 - [x] Create form → enter name + select project → task created and auto-selected ✅
 - [x] After creation → click field again → full task list loads (including new task) ✅
 - [x] After creation → can clear selection and pick a different task ✅
+
+---
+
+### C-013 — Timecard export
+
+**Status:** ✅ Done — confirmed working 2026-05-07
+**Priority:** Medium
+
+#### Requirement
+
+Users need a PDF-exportable timecard report matching the Clockify Detailed Report format: per-interval rows showing Date, Description (task + project), Duration (HH:MM:SS + time slot), and User. The existing Cattr Time Use Report only shows aggregated totals per task — no individual intervals and no export.
+
+#### What was done
+
+**Frontend — `app/public/timecard-export.js`** (new file, ~340 lines)
+
+Standalone IIFE injected into the app shell. Activates only on `/report/time-use`.
+
+- **Native view replaced:** Hides Cattr's aggregated accordion (`.at-container`) and appends `#dn-timecard-container` to the page. On navigation away, `cleanup()` removes the container and restores the native view.
+- **Data source:** Calls `POST /api/time-intervals/list` with `with: ['task', 'task.project', 'user']`, `where: { start_at: ['between', [...]] }`, `orderBy: ['start_at', 'desc']`, `perPage: 2000`. Uses the same Bearer token from `localStorage.access_token`.
+- **User filter:** Reads selected user IDs from the Vue component via `vm.$route.matched[n].instances.default.userIDs`. Passes them as `where['user_id'] = ['=', userIds]` (two-element format required by QueryHelper — see technical notes below).
+- **Table columns:** Date | Description (task name + project in secondary text) | Duration (HH:MM:SS + start→end time slot) | User
+- **Timezone:** All timestamps converted from UTC via `Intl.DateTimeFormat.formatToParts` using the company timezone from `vm.$store.getters['user/companyData'].timezone`.
+- **Export PDF button:** Generates a PDF client-side using jsPDF + jspdf-autotable (loaded on demand from jsDelivr CDN on first click). Triggers a direct browser file download — no print dialog. Filename: `Cattr_Time_Report_Detailed_{start}-{end}.pdf`. Falls back to `window.print()` if CDN load fails. Print CSS retained for the fallback path.
+- **Apply button:** `<button id="dn-apply-filter-btn">Apply</button>` injected inside the AT-UI user select dropdown portal. User filter changes require Apply click; date range changes auto-refetch immediately.
+- **Page heading suppressed:** `.time-use-report .page-title { display: none !important; }` — removes the Vue `<h1>` that would duplicate our custom "Detailed report" heading.
+
+**`app/resources/views/app.blade.php`** — `<script src="/timecard-export.js"></script>` added.
+
+**`Dockerfile`** — `COPY app/public/timecard-export.js /app/public/timecard-export.js` added.
+
+#### Key technical findings
+
+**MutationObserver re-entrancy (freeze bug)**
+
+Writing to `container.innerHTML` inside the observer callback triggered an immediate second observation. The second call saw stale state (flags not yet updated because they were set after the async fetch) and triggered a third fetch — infinite loop → page freeze.
+
+Fix: set `_fetching = true`, `currentStart`, `currentEnd` ALL before the first DOM write. The re-entrant tick arrives synchronously and sees the guard flags already set.
+
+**QueryHelper `where` format for `whereIn`**
+
+`where: { user_id: [1, 2] }` is misread as `[$operator=1, $value=2]` → `WHERE user_id = 2`. For a single-element array `[1]`: malformed query → no results. Correct format: `where: { user_id: ['=', [1, 2]] }` → QueryHelper reads `$operator='='`, `$value=[1,2]` → `whereIn`.
+
+#### Files Modified
+
+| File | Tracked location |
+|---|---|
+| `app/public/timecard-export.js` | [yop-dev/cattr-os](https://github.com/yop-dev/cattr-os) |
+| `app/resources/views/app.blade.php` | [yop-dev/cattr-os](https://github.com/yop-dev/cattr-os) |
+| `Dockerfile` | [yop-dev/cattr-os](https://github.com/yop-dev/cattr-os) |
+
+#### Test
+
+- [x] Navigate to Reports → lands on Time Use Report page ✅
+- [x] Date range set → table loads with per-interval rows ✅
+- [x] Date | Description (task + project) | Duration (HH:MM:SS + time slot) | User columns visible ✅
+- [x] Total duration shown in header ✅
+- [x] Click Export PDF → Windows Save As dialog appears; PDF downloads with correct filename ✅
+- [x] Select user from filter → click Apply → table reloads for that user only ✅
+- [x] Select multiple users → click Apply → table shows all selected users ✅
+- [x] No users selected → table shows all users ✅
+- [x] Change date range → table auto-refetches without Apply ✅
+- [x] Navigate away and back → table re-renders cleanly ✅
+- [ ] Verify timestamps display in correct company timezone
+- [ ] Test with 2000+ intervals (perPage limit)
 
 ---
 

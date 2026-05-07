@@ -40,3 +40,6 @@ COPY app/app/Scopes/ProjectAccessScope.php /app/app/Scopes/ProjectAccessScope.ph
 
 # C-012: Time interval form — lower task search to 1 char, add inline task creation
 COPY app/public/time-interval-helpers.js /app/public/time-interval-helpers.js
+
+# C-013: Timecard export — per-interval table + jsPDF direct download on Time Use Report page
+COPY app/public/timecard-export.js /app/public/timecard-export.js
