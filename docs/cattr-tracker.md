@@ -17,6 +17,8 @@ All planned changes and known bugs for the Cattr deployment. Customisations are 
 | C-011 | All users can see all projects (prevent duplicate project creation) | ✅ Done | Medium |
 | C-012 | Time interval form — lower task search to 1 char, show recommendations on focus, inline task creation | ✅ Done | Medium |
 | C-013 | Timecard export — per-interval PDF export on Time Use Report page (Clockify-style table) | ✅ Done | Medium |
+| C-014 | Hide Calendar nav item (Planned Time — not used by team) | ✅ Done | Low |
+| C-015 | Screenshots + Team page dropdown UX — hide Active/Inactive tabs, role filter; add Apply buttons | ✅ Done | Low |
 
 ---
 
