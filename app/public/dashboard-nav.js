@@ -54,6 +54,18 @@
             '.dn-sc-task { font-size: 11px; font-weight: 500; color: #333; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }',
             '.dn-sc-project { font-size: 10px; color: #2e2ef9; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; margin-top: 1px; }',
             '.dn-sc-time { font-size: 10px; color: #888; margin-top: 1px; }',
+            // Dashboard screenshot modal
+            '#' + 'dn-sc-modal { display: none; position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,.7); z-index: 9999; align-items: center; justify-content: center; }',
+            '.dn-modal__panel { background: #fff; border-radius: 8px; max-width: 1200px; width: 92%; display: flex; flex-direction: column; box-shadow: 0 16px 48px rgba(0,0,0,.3); }',
+            '.dn-modal__header { padding: 14px 20px; border-bottom: 1px solid #eee; display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }',
+            '.dn-modal__title { font-weight: 600; color: #333; font-size: 15px; }',
+            '.dn-modal__meta { font-size: 12px; color: #888; margin-top: 3px; }',
+            '.dn-modal__close { background: none; border: none; font-size: 22px; color: #aaa; cursor: pointer; line-height: 1; padding: 0 4px; flex-shrink: 0; }',
+            '.dn-modal__body { overflow: hidden; display: flex; align-items: center; justify-content: center; background: #f5f5f5; min-height: 200px; }',
+            '.dn-modal__img { max-width: 100%; max-height: 80vh; object-fit: contain; display: block; }',
+            '.dn-modal__footer { padding: 12px 20px; border-top: 1px solid #eee; display: flex; gap: 8px; }',
+            '.dn-modal__btn { background: #fff; border: 1px solid #ddd; border-radius: 4px; padding: 6px 14px; cursor: pointer; color: #555; font-size: 13px; }',
+            '.dn-modal__btn:disabled { opacity: 0.4; cursor: not-allowed; }',
         ].join('\n');
         document.head.appendChild(style);
     }
@@ -422,6 +434,9 @@
     // ── Dashboard screenshots replacement ──────────────────────────────────
 
     var _scPatchedKey = null;
+    var DN_MODAL_ID   = 'dn-sc-modal';
+    var _dashIntervals = [];
+    var _dashModalIdx  = 0;
 
     function dnNormTs(s) {
         s = String(s || '').replace(' ', 'T');
@@ -477,11 +492,13 @@
 
         if (!intervals.length) return;
 
+        _dashIntervals = intervals.slice();
+
         var tz = window.__cattrTz || 'UTC';
         var grid = document.createElement('div');
         grid.id = 'dn-sc-grid';
 
-        intervals.forEach(function (iv) {
+        intervals.forEach(function (iv, idx) {
             if (!iv || !iv.id) return;
             var taskName    = (iv.task && iv.task.task_name) || (iv.task_name) || '—';
             var projectName = iv.project_name || (iv.task && iv.task.project && iv.task.project.name) || '';
@@ -496,6 +513,7 @@
 
             var card = document.createElement('div');
             card.className = 'dn-sc-card';
+            card.style.cursor = 'pointer';
 
             var img = document.createElement('img');
             img.className = 'dn-sc-img';
@@ -510,10 +528,90 @@
                 (projectName ? '<div class="dn-sc-project">' + dnEscHtml(projectName) + '</div>' : '') +
                 (timeStr ? '<div class="dn-sc-time">' + timeStr + '</div>' : '');
             card.appendChild(info);
+
+            card.addEventListener('click', (function (i) {
+                return function () { openDashModal(i); };
+            })(idx));
+
             grid.appendChild(card);
         });
 
         el.appendChild(grid);
+    }
+
+    function buildDashModal() {
+        if (document.getElementById(DN_MODAL_ID)) return;
+        var modal = document.createElement('div');
+        modal.id = DN_MODAL_ID;
+        modal.innerHTML = [
+            '<div class="dn-modal__panel">',
+              '<div class="dn-modal__header">',
+                '<div>',
+                  '<div class="dn-modal__title" id="dn-modal-title"></div>',
+                  '<div class="dn-modal__meta"  id="dn-modal-meta"></div>',
+                '</div>',
+                '<button class="dn-modal__close" id="dn-modal-close">\xd7</button>',
+              '</div>',
+              '<div class="dn-modal__body">',
+                '<img class="dn-modal__img" id="dn-modal-img" src="" alt="">',
+              '</div>',
+              '<div class="dn-modal__footer">',
+                '<button class="dn-modal__btn" id="dn-modal-prev">&#8249; Prev</button>',
+                '<button class="dn-modal__btn" id="dn-modal-next">Next &#8250;</button>',
+              '</div>',
+            '</div>'
+        ].join('');
+        document.body.appendChild(modal);
+        modal.addEventListener('click', function (e) { if (e.target === modal) closeDashModal(); });
+        document.getElementById('dn-modal-close').addEventListener('click', closeDashModal);
+        document.getElementById('dn-modal-prev').addEventListener('click', function () { navigateDashModal(-1); });
+        document.getElementById('dn-modal-next').addEventListener('click', function () { navigateDashModal(1); });
+    }
+
+    function renderDashModalContent(idx) {
+        var iv = _dashIntervals[idx];
+        if (!iv) return;
+        var tz = window.__cattrTz || 'UTC';
+        var timeStr = '';
+        if (iv.start_at) {
+            try {
+                timeStr = new Intl.DateTimeFormat('en-US', {
+                    timeZone: tz, hour: 'numeric', minute: '2-digit', hour12: true,
+                }).format(new Date(dnNormTs(iv.start_at)));
+            } catch (e) {}
+        }
+        var taskName    = (iv.task && iv.task.task_name) || iv.task_name || '—';
+        var projectName = iv.project_name || (iv.task && iv.task.project && iv.task.project.name) || '';
+        document.getElementById('dn-modal-title').textContent = taskName;
+        document.getElementById('dn-modal-meta').textContent  = [projectName, timeStr].filter(Boolean).join(' · ');
+
+        var modalImg = document.getElementById('dn-modal-img');
+        if (modalImg.dataset.blobUrl) { URL.revokeObjectURL(modalImg.dataset.blobUrl); modalImg.dataset.blobUrl = ''; }
+        modalImg.src = '';
+        modalImg.style.display = '';
+        dnFetchImage(modalImg, '/api/time-intervals/' + iv.id + '/screenshot');
+
+        document.getElementById('dn-modal-prev').disabled = (idx <= 0);
+        document.getElementById('dn-modal-next').disabled = (idx >= _dashIntervals.length - 1);
+    }
+
+    function openDashModal(idx) {
+        buildDashModal();
+        _dashModalIdx = Math.max(0, Math.min(_dashIntervals.length - 1, idx));
+        renderDashModalContent(_dashModalIdx);
+        document.getElementById(DN_MODAL_ID).style.display = 'flex';
+    }
+
+    function closeDashModal() {
+        var modal = document.getElementById(DN_MODAL_ID);
+        if (modal) modal.style.display = 'none';
+    }
+
+    function navigateDashModal(delta) {
+        var newIdx = Math.max(0, Math.min(_dashIntervals.length - 1, _dashModalIdx + delta));
+        if (newIdx === _dashModalIdx) return;
+        _dashModalIdx = newIdx;
+        renderDashModalContent(_dashModalIdx);
     }
 
     function tick() {
@@ -533,6 +631,13 @@
     function init() {
         localStorage.setItem('dashboard.tab', 'timeline');
         injectCSS();
+        document.addEventListener('keydown', function (e) {
+            var modal = document.getElementById(DN_MODAL_ID);
+            if (!modal || modal.style.display === 'none') return;
+            if (e.key === 'Escape')     closeDashModal();
+            if (e.key === 'ArrowLeft')  navigateDashModal(-1);
+            if (e.key === 'ArrowRight') navigateDashModal(1);
+        });
         var observer = new MutationObserver(tick);
         observer.observe(document.body, { childList: true, subtree: true });
     }
