@@ -45,29 +45,38 @@
 
     // ── Native grid management ─────────────────────────────────────────────
     function hideNativeGrid() {
-        // Mark every direct child of the screenshots page container
-        // that isn't our own container, so we can restore them on cleanup.
-        var page = document.querySelector('.crud__table, .at-col, .screenshots-report__content');
-        if (!page) {
-            // Fallback: walk the route component's root el children
-            var vm = getVm();
-            if (vm && vm.$route) {
-                var matched = vm.$route.matched;
-                for (var i = matched.length - 1; i >= 0; i--) {
-                    var inst = matched[i].instances && matched[i].instances.default;
-                    if (inst && inst.$el) { page = inst.$el; break; }
+        // First try: find the specific grid element and hide it directly.
+        // This is precise and does not touch the filter bar.
+        var grid = document.querySelector('.screenshots-report__content, .screenshots-report .crud__table');
+        if (grid) {
+            if (!grid.dataset.scHidden) {
+                grid.dataset.scHidden = '1';
+                grid.style.display = 'none';
+            }
+            return;
+        }
+
+        // Fallback: walk the route component's root el and hide children that are
+        // content areas (not filter controls). We identify filter areas by the
+        // presence of input/select elements inside them.
+        var vm = getVm();
+        if (!vm || !vm.$route) return;
+        var matched = vm.$route.matched;
+        for (var i = matched.length - 1; i >= 0; i--) {
+            var inst = matched[i].instances && matched[i].instances.default;
+            if (!inst || !inst.$el) continue;
+            var children = inst.$el.children;
+            for (var j = 0; j < children.length; j++) {
+                var child = children[j];
+                if (child.id === CONTAINER_ID || child.id === MODAL_ID) continue;
+                // Skip filter bars — they contain inputs/selects/datepickers
+                if (child.querySelector('input, select, .at-select, .at-datepicker')) continue;
+                if (!child.dataset.scHidden) {
+                    child.dataset.scHidden = '1';
+                    child.style.display = 'none';
                 }
             }
-        }
-        if (!page) return;
-        var children = page.children;
-        for (var j = 0; j < children.length; j++) {
-            var child = children[j];
-            if (child.id === CONTAINER_ID || child.id === MODAL_ID) continue;
-            if (!child.dataset.scHidden) {
-                child.dataset.scHidden = '1';
-                child.style.display = 'none';
-            }
+            return;
         }
     }
 
