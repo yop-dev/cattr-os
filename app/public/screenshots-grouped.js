@@ -181,7 +181,7 @@
             new Intl.DateTimeFormat('en-US', { timeZone: tz, hour: '2-digit', hour12: false }).format(d),
             10
         );
-        var hour24 = (h24raw === 24) ? 0 : h24raw;
+        var hour24 = (h24raw === 24) ? 0 : h24raw; // some engines return '24' for midnight
 
         return { hour24: hour24, timeStr: timeStr };
     }
@@ -208,7 +208,12 @@
         });
 
         order.sort(function (a, b) { return a - b; });
-        return order.map(function (h) { return { hour24: h, items: buckets[h] }; });
+        return order.map(function (h) {
+            var items = buckets[h].slice().sort(function (a, b) {
+                return a.interval.start_at < b.interval.start_at ? -1 : 1;
+            });
+            return { hour24: h, items: items };
+        });
     }
 
     // ── DOM builders ───────────────────────────────────────────────────────
