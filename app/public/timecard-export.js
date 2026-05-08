@@ -4,6 +4,7 @@
     var CONTAINER_ID    = 'dn-timecard-container';
     var APPLY_BTN_ID    = 'dn-apply-filter-btn';
     var STYLE_ID        = 'dn-timecard-styles';
+    var EDIT_MODAL_ID   = 'dn-edit-modal';
     var currentStart = null;
     var currentEnd   = null;
     var _fetching    = false; // guard against MutationObserver re-entrancy
@@ -129,6 +130,119 @@
         var s = secs % 60;
         var p = function (n) { return String(n).padStart(2, '0'); };
         return p(h) + ':' + p(m) + ':' + p(s);
+    }
+
+    // Returns "YYYY-MM-DDTHH:MM" in the given IANA timezone — suitable as a
+    // datetime-local input value. en-CA locale produces ISO date format naturally.
+    function utcToLocalInput(isoUtc, tz) {
+        try {
+            var parts = {};
+            new Intl.DateTimeFormat('en-CA', {
+                timeZone: tz,
+                year: 'numeric', month: '2-digit', day: '2-digit',
+                hour: '2-digit', minute: '2-digit', hour12: false,
+            }).formatToParts(new Date(isoUtc)).forEach(function (p) { parts[p.type] = p.value; });
+            var h = parts.hour === '24' ? '00' : parts.hour; // Intl quirk: midnight = "24"
+            return parts.year + '-' + parts.month + '-' + parts.day + 'T' + h + ':' + parts.minute;
+        } catch (e) {
+            return isoUtc.slice(0, 16); // fallback: return ISO string trimmed to minute
+        }
+    }
+
+    // Converts a "YYYY-MM-DDTHH:MM" string (in `tz`) to a UTC ISO string.
+    // Strategy: parse as UTC, round-trip through utcToLocalInput to find the
+    // offset, then subtract it. Spring-forward gaps resolve correctly. Fall-back
+    // ambiguity (one hour per year) always picks the pre-transition (earlier UTC)
+    // occurrence — acceptable for a small internal team.
+    function localInputToUtcIso(localStr, tz) {
+        var asUtcMs = new Date(localStr + ':00.000Z').getTime();
+        var roundtrip = utcToLocalInput(new Date(asUtcMs).toISOString(), tz);
+        var roundtripMs = new Date(roundtrip + ':00.000Z').getTime();
+        return new Date(2 * asUtcMs - roundtripMs).toISOString();
+    }
+
+    function closeEditModal() {
+        var m = document.getElementById(EDIT_MODAL_ID);
+        if (m) m.parentNode.removeChild(m);
+    }
+
+    function saveEdit(id, startIso, endIso) {
+        return apiFetch('time-intervals/edit', {
+            id: id,
+            start_at: startIso,
+            end_at: endIso,
+        });
+    }
+
+    function openEditModal(iv) {
+        closeEditModal();
+        var tz       = getCompanyTimezone();
+        var startVal = utcToLocalInput(iv.start_at || new Date().toISOString(), tz);
+        var endVal   = utcToLocalInput(iv.end_at || new Date().toISOString(), tz);
+        var taskName = iv.task ? (iv.task.task_name || '—') : '—';
+        var project  = iv.task && iv.task.project ? iv.task.project.name : '';
+
+        var overlay = document.createElement('div');
+        overlay.id = EDIT_MODAL_ID;
+        overlay.className = 'dn-edit-overlay';
+        overlay.innerHTML =
+            '<div class="dn-edit-modal">' +
+            '<div class="dn-edit-title">Edit Time Entry</div>' +
+            '<div class="dn-edit-subtitle">' + esc(taskName) + (project ? ' · ' + esc(project) : '') + '</div>' +
+            '<label class="dn-edit-label">Start' +
+            '<input class="dn-edit-input" id="dn-edit-start" type="datetime-local" value="' + esc(startVal) + '">' +
+            '</label>' +
+            '<label class="dn-edit-label">End' +
+            '<input class="dn-edit-input" id="dn-edit-end" type="datetime-local" value="' + esc(endVal) + '">' +
+            '</label>' +
+            '<div class="dn-edit-tz">Times shown in ' + esc(tz) + '</div>' +
+            '<div class="dn-edit-error" id="dn-edit-error" style="display:none"></div>' +
+            '<div class="dn-edit-actions">' +
+            '<button class="at-btn at-btn--small" id="dn-edit-cancel">Cancel</button>' +
+            '<button class="at-btn at-btn--primary at-btn--small" id="dn-edit-save">Save</button>' +
+            '</div>' +
+            '</div>';
+
+        document.body.appendChild(overlay);
+
+        document.getElementById('dn-edit-cancel').addEventListener('click', closeEditModal);
+        overlay.addEventListener('click', function (e) {
+            if (e.target === overlay) closeEditModal();
+        });
+
+        document.getElementById('dn-edit-save').addEventListener('click', function () {
+            var startInput = document.getElementById('dn-edit-start').value;
+            var endInput   = document.getElementById('dn-edit-end').value;
+            var errEl      = document.getElementById('dn-edit-error');
+            if (!startInput || !endInput) {
+                errEl.textContent = 'Both start and end times are required.';
+                errEl.style.display = 'block';
+                return;
+            }
+            if (new Date(endInput).getTime() <= new Date(startInput).getTime()) {
+                errEl.textContent = 'End time must be after start time.';
+                errEl.style.display = 'block';
+                return;
+            }
+            errEl.style.display = 'none';
+            var saveBtn = document.getElementById('dn-edit-save');
+            saveBtn.disabled = true;
+            saveBtn.textContent = 'Saving…';
+
+            var startIso = localInputToUtcIso(startInput, tz);
+            var endIso   = localInputToUtcIso(endInput, tz);
+
+            saveEdit(iv.id, startIso, endIso).then(function () {
+                closeEditModal();
+                currentStart = null;
+                renderTimecard();
+            }).catch(function (err) {
+                errEl.textContent = 'Save failed: ' + (err.message || 'unknown error');
+                errEl.style.display = 'block';
+                saveBtn.disabled = false;
+                saveBtn.textContent = 'Save';
+            });
+        });
     }
 
     // ── fetch ──────────────────────────────────────────────────────────────
@@ -297,7 +411,9 @@
 
         var thead = document.createElement('thead');
         thead.innerHTML =
-            '<tr><th>Date</th><th>Description</th><th>Duration</th><th>User</th></tr>';
+            '<tr><th>Date</th><th>Description</th><th>Duration</th><th>User</th>' +
+            (isAdmin() ? '<th></th>' : '') +
+            '</tr>';
         tbl.appendChild(thead);
 
         var tbody = document.createElement('tbody');
@@ -321,6 +437,23 @@
                     '<div class="dn-tc-timeslot">' + esc(sp.timeStr) + ' – ' + esc(ep.timeStr) + '</div>' +
                 '</td>' +
                 '<td class="dn-tc-col-user">' + esc(userName) + '</td>';
+
+            if (isAdmin()) {
+                var editTd  = document.createElement('td');
+                editTd.className = 'dn-tc-col-action';
+                if (iv.end_at) {
+                    var editBtn = document.createElement('button');
+                    editBtn.className = 'dn-tc-edit-btn';
+                    editBtn.title = 'Edit times';
+                    editBtn.textContent = '✎';
+                    (function (interval) {
+                        editBtn.addEventListener('click', function () { openEditModal(interval); });
+                    }(iv));
+                    editTd.appendChild(editBtn);
+                }
+                tr.appendChild(editTd);
+            }
+
             tbody.appendChild(tr);
         });
         tbl.appendChild(tbody);
@@ -405,6 +538,20 @@
             '  .dn-tc-table tbody tr { border-bottom: 1px solid #e0e0e0; page-break-inside: avoid; }',
             '  body { font-size: 10pt; color: #000; }',
             '}',
+            // Edit button in table
+            '.dn-tc-col-action { width: 40px; text-align: center; padding: 14px 8px; }',
+            '.dn-tc-edit-btn { background: none; border: 1px solid #ddd; border-radius: 4px; cursor: pointer; padding: 4px 8px; font-size: 0.95rem; color: #666; line-height: 1; }',
+            '.dn-tc-edit-btn:hover { background: #f5f5f5; border-color: #aaa; color: #222; }',
+            // Edit modal
+            '.dn-edit-overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.45); z-index: 9999; display: flex; align-items: center; justify-content: center; }',
+            '.dn-edit-modal { background: #fff; border-radius: 8px; padding: 28px 32px; width: 380px; max-width: 90vw; box-shadow: 0 8px 32px rgba(0,0,0,0.18); }',
+            '.dn-edit-title { font-size: 1.15rem; font-weight: 600; color: #111; margin-bottom: 6px; }',
+            '.dn-edit-subtitle { font-size: 0.87rem; color: #777; margin-bottom: 20px; }',
+            '.dn-edit-label { display: block; font-size: 0.85rem; color: #555; margin-bottom: 14px; font-weight: 500; }',
+            '.dn-edit-input { display: block; width: 100%; margin-top: 5px; padding: 7px 10px; border: 1px solid #d0d0d0; border-radius: 4px; font-size: 0.92rem; box-sizing: border-box; font-weight: 400; }',
+            '.dn-edit-tz { font-size: 0.78rem; color: #aaa; margin-bottom: 16px; }',
+            '.dn-edit-error { color: #dc2626; font-size: 0.85rem; margin-bottom: 14px; padding: 8px 12px; background: #fef2f2; border: 1px solid #fecaca; border-radius: 4px; }',
+            '.dn-edit-actions { display: flex; gap: 10px; justify-content: flex-end; }',
         ].join('\n');
         document.head.appendChild(s);
     }
@@ -482,6 +629,7 @@
     }
 
     function cleanup() {
+        closeEditModal();
         _fetching    = false;
         currentStart = null;
         currentEnd   = null;
