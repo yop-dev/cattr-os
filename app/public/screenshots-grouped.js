@@ -502,6 +502,7 @@
                   '<button class="sc-modal__btn" id="sc-modal-next">Next ›</button>',
                 '</div>',
                 '<button class="sc-modal__delete" id="sc-modal-delete">🗑 Delete interval</button>',
+                '<span class="sc-modal__err" id="sc-modal-err"></span>',
               '</div>',
             '</div>'
         ].join('');
@@ -568,7 +569,9 @@
     }
 
     function navigateModal(delta) {
-        _modalIdx = Math.max(0, Math.min(_allIntervals.length - 1, _modalIdx + delta));
+        var newIdx = Math.max(0, Math.min(_allIntervals.length - 1, _modalIdx + delta));
+        if (newIdx === _modalIdx) return;
+        _modalIdx = newIdx;
         renderModalContent(_modalIdx);
     }
 
