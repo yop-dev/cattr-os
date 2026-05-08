@@ -171,13 +171,13 @@
     // ── Stub for tick (filled in later tasks) ─────────────────────────────
     function tick() {
         if (!isOnScreenshots()) { cleanup(); return; }
+        injectCSS();
         hideNativeGrid();
         injectContainer();
         // renderScreenshots() added in Task 3
     }
 
     function init() {
-        injectCSS();
         document.addEventListener('keydown', function (e) {
             var modal = document.getElementById(MODAL_ID);
             if (!modal || modal.style.display === 'none') return;
