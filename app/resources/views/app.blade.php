@@ -26,7 +26,7 @@
     $__tz = \Illuminate\Support\Facades\DB::table('settings')
         ->where('module_name', 'core')->where('key', 'timezone')->value('value') ?? 'UTC';
 @endphp
-<script>window.__cattrTz = '{{ addslashes($__tz) }}';</script>
+<script>window.__cattrTz = @json($__tz);</script>
 <x:sri.script mix src="/dist/app.js"></x:sri-script>
 <script src="/hide-employee-controls.js?v={{ filemtime(public_path('hide-employee-controls.js')) }}"></script>
 <script src="/quick-create.js?v={{ filemtime(public_path('quick-create.js')) }}"></script>

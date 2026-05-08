@@ -1,6 +1,12 @@
 (function () {
     'use strict';
 
+    function escHtml(str) {
+        return String(str || '')
+            .replace(/&/g, '&amp;').replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+    }
+
     function isOnTimeIntervalForm() {
         var p = window.location.pathname;
         return p === '/time-intervals/new' || /^\/time-intervals\/\d/.test(p);
@@ -215,7 +221,7 @@
             if (!sel) return;
             sel.innerHTML = '<option value="">Select project…</option>' +
                 projects.map(function (p) {
-                    return '<option value="' + p.id + '">' + p.name.replace(/</g, '&lt;') + '</option>';
+                    return '<option value="' + escHtml(String(p.id)) + '">' + escHtml(p.name) + '</option>';
                 }).join('');
         });
 

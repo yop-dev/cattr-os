@@ -105,12 +105,20 @@
     }
 
     // ── Cleanup ────────────────────────────────────────────────────────────
+    function revokeBlobUrls(root) {
+        if (!root) return;
+        var imgs = root.querySelectorAll('img[data-blob-url]');
+        for (var i = 0; i < imgs.length; i++) {
+            URL.revokeObjectURL(imgs[i].dataset.blobUrl);
+        }
+    }
+
     function cleanup() {
         showNativeGrid();
         var c = document.getElementById(CONTAINER_ID);
-        if (c) c.parentNode.removeChild(c);
+        if (c) { revokeBlobUrls(c); c.parentNode.removeChild(c); }
         var m = document.getElementById(MODAL_ID);
-        if (m) m.parentNode.removeChild(m);
+        if (m) { revokeBlobUrls(m); m.parentNode.removeChild(m); }
         currentDate       = null;
         currentUserIds    = null;
         currentProjectIds = null;

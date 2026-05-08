@@ -12,15 +12,15 @@ class EditTimeIntervalRequest extends CattrFormRequest
 
     public function authorizeValidated(): bool
     {
-        return $this->user()->can('update', TimeInterval::find(request('id')));
+        return $this->user()->can('update', TimeInterval::find((int) request('id')));
     }
 
     public function _rules(): array
     {
         return [
             'id'       => 'required|int|exists:time_intervals,id',
-            'start_at' => 'required|string',
-            'end_at'   => 'required|string',
+            'start_at' => 'required|date',
+            'end_at'   => 'required|date|after:start_at',
         ];
     }
 }

@@ -428,11 +428,12 @@
         var submitBtn = wrapper.querySelector('#qc-submit');
         submitBtn.addEventListener('click', handleSubmit);
 
-        // Outside click → close
+        // Outside click → close (one listener, removed on cleanup)
         if (!docListenerAttached) {
             document.addEventListener('click', closeDropdown);
             docListenerAttached = true;
         }
+
 
         fetchProjects();
         fetchDefaults();
@@ -446,9 +447,12 @@
         } else {
             var existing = document.getElementById(BAR_ID);
             if (existing && existing.parentNode) existing.parentNode.removeChild(existing);
+            if (docListenerAttached) {
+                document.removeEventListener('click', closeDropdown);
+                docListenerAttached = false;
+            }
             selectedProject = null;
             filterText = '';
-            docListenerAttached = false;
         }
     }
 
