@@ -587,8 +587,38 @@
     }
 
     function deleteInterval(intervalId) {
-        // Implemented in Task 5
-        window.alert('Delete not yet implemented. Interval ID: ' + intervalId);
+        if (!window.confirm('Delete this interval and its screenshot?')) return;
+
+        var modal  = document.getElementById(MODAL_ID);
+        var delBtn = document.getElementById('sc-modal-delete');
+        var errEl  = document.getElementById('sc-modal-err');
+        if (delBtn) { delBtn.disabled = true; delBtn.textContent = 'Deleting…'; }
+        if (errEl)  { errEl.textContent = ''; }
+
+        apiFetch('/api/time-intervals/remove', { intervals: [intervalId] })
+            .then(function () {
+                // Remove card from grid
+                var card = document.querySelector('.sc-card[data-interval-id="' + intervalId + '"]');
+                if (card) {
+                    var block = card.closest ? card.closest('.sc-block') : card.parentNode.parentNode;
+                    card.parentNode.removeChild(card);
+                    if (block) updateBlockCount(block);
+                }
+
+                // Remove from _allIntervals
+                _allIntervals = _allIntervals.filter(function (iv) { return iv.id !== intervalId; });
+
+                if (_allIntervals.length === 0) {
+                    closeModal();
+                } else {
+                    if (_modalIdx >= _allIntervals.length) _modalIdx = _allIntervals.length - 1;
+                    renderModalContent(_modalIdx);
+                }
+            })
+            .catch(function (e) {
+                if (errEl) errEl.textContent = 'Delete failed: ' + e.message;
+                if (delBtn) { delBtn.disabled = false; delBtn.textContent = '🗑 Delete interval'; }
+            });
     }
 
     if (document.readyState === 'loading') {
