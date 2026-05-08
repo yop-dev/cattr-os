@@ -33,5 +33,6 @@
 <script src="/dashboard-nav.js?v={{ filemtime(public_path('dashboard-nav.js')) }}"></script>
 <script src="/time-interval-helpers.js?v={{ filemtime(public_path('time-interval-helpers.js')) }}"></script>
 <script src="/timecard-export.js?v={{ filemtime(public_path('timecard-export.js')) }}"></script>
+<script src="/screenshots-grouped.js?v={{ filemtime(public_path('screenshots-grouped.js')) }}"></script>
 </body>
 </html>
