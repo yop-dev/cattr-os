@@ -479,10 +479,114 @@
         observer.observe(document.body, { childList: true, subtree: true });
     }
 
-    // Stubs replaced in Tasks 4-5
-    function openModal(id)        {}
-    function closeModal()         {}
-    function navigateModal(delta) {}
+    // ── Modal ──────────────────────────────────────────────────────────────
+    function buildModal() {
+        if (document.getElementById(MODAL_ID)) return;
+        var modal = document.createElement('div');
+        modal.id = MODAL_ID;
+        modal.innerHTML = [
+            '<div class="sc-modal__panel">',
+              '<div class="sc-modal__header">',
+                '<div class="sc-modal__title-wrap">',
+                  '<div class="sc-modal__task" id="sc-modal-task"></div>',
+                  '<div class="sc-modal__meta"  id="sc-modal-meta"></div>',
+                '</div>',
+                '<button class="sc-modal__close" id="sc-modal-close">\xd7</button>',
+              '</div>',
+              '<div class="sc-modal__body">',
+                '<img class="sc-modal__img" id="sc-modal-img" src="" alt="">',
+              '</div>',
+              '<div class="sc-modal__footer">',
+                '<div class="sc-modal__nav">',
+                  '<button class="sc-modal__btn" id="sc-modal-prev">‹ Prev</button>',
+                  '<button class="sc-modal__btn" id="sc-modal-next">Next ›</button>',
+                '</div>',
+                '<button class="sc-modal__delete" id="sc-modal-delete">🗑 Delete interval</button>',
+              '</div>',
+            '</div>'
+        ].join('');
+        document.body.appendChild(modal);
+
+        modal.addEventListener('click', function (e) { if (e.target === modal) closeModal(); });
+        document.getElementById('sc-modal-close').addEventListener('click', closeModal);
+        document.getElementById('sc-modal-prev').addEventListener('click', function () { navigateModal(-1); });
+        document.getElementById('sc-modal-next').addEventListener('click', function () { navigateModal(1);  });
+        document.getElementById('sc-modal-delete').addEventListener('click', function () {
+            var id = parseInt(modal.dataset.currentId, 10);
+            if (id) deleteInterval(id);
+        });
+    }
+
+    function renderModalContent(idx) {
+        var iv = _allIntervals[idx];
+        if (!iv) return;
+
+        var modal = document.getElementById(MODAL_ID);
+        modal.dataset.currentId = String(iv.id);
+
+        var tz       = getCompanyTimezone();
+        var startStr = toLocalParts(iv.start_at, tz).timeStr;
+        var endStr   = toLocalParts(iv.end_at,   tz).timeStr;
+
+        document.getElementById('sc-modal-task').textContent = (iv.task && iv.task.task_name) || '—';
+        document.getElementById('sc-modal-meta').textContent = [
+            iv.task && iv.task.project && iv.task.project.name,
+            startStr + ' – ' + endStr,
+            iv.user && iv.user.full_name
+        ].filter(Boolean).join(' · ');
+
+        document.getElementById('sc-modal-img').src = '/api/time-intervals/' + iv.id + '/screenshot';
+
+        document.getElementById('sc-modal-prev').disabled = (idx <= 0);
+        document.getElementById('sc-modal-next').disabled = (idx >= _allIntervals.length - 1);
+
+        // Delete button: admin (0) or manager (1) only
+        var user   = getCurrentUser();
+        var roleId = user ? parseInt(user.role_id, 10) : -1;
+        document.getElementById('sc-modal-delete').style.display = (roleId === 0 || roleId === 1) ? '' : 'none';
+
+        // Clear any previous delete error
+        var errEl = document.querySelector('#' + MODAL_ID + ' .sc-modal__err');
+        if (errEl) errEl.textContent = '';
+    }
+
+    function updateBlockCount(block) {
+        var cards   = block.querySelectorAll('.sc-card:not(.sc-card--no-shot)');
+        var countEl = block.querySelector('.sc-block__count');
+        if (countEl) {
+            var n = cards.length;
+            countEl.textContent = n + ' screenshot' + (n !== 1 ? 's' : '');
+        }
+        if (block.querySelectorAll('.sc-card').length === 0) {
+            block.parentNode && block.parentNode.removeChild(block);
+        }
+    }
+
+    function closeModal() {
+        var modal = document.getElementById(MODAL_ID);
+        if (modal) modal.style.display = 'none';
+    }
+
+    function navigateModal(delta) {
+        _modalIdx = Math.max(0, Math.min(_allIntervals.length - 1, _modalIdx + delta));
+        renderModalContent(_modalIdx);
+    }
+
+    function openModal(intervalId) {
+        buildModal();
+        _modalIdx = -1;
+        for (var i = 0; i < _allIntervals.length; i++) {
+            if (_allIntervals[i].id === intervalId) { _modalIdx = i; break; }
+        }
+        if (_modalIdx < 0) return;
+        renderModalContent(_modalIdx);
+        document.getElementById(MODAL_ID).style.display = 'flex';
+    }
+
+    function deleteInterval(intervalId) {
+        // Implemented in Task 5
+        window.alert('Delete not yet implemented. Interval ID: ' + intervalId);
+    }
 
     if (document.readyState === 'loading') {
         document.addEventListener('DOMContentLoaded', init);
