@@ -589,7 +589,6 @@
     function deleteInterval(intervalId) {
         if (!window.confirm('Delete this interval and its screenshot?')) return;
 
-        var modal  = document.getElementById(MODAL_ID);
         var delBtn = document.getElementById('sc-modal-delete');
         var errEl  = document.getElementById('sc-modal-err');
         if (delBtn) { delBtn.disabled = true; delBtn.textContent = 'Deleting…'; }
