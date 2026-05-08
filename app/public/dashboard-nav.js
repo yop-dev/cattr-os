@@ -38,6 +38,8 @@
             '.at-menu.navbar .at-menu__item:has(a[href="/calendar"]) { display: none !important; }',
             // Timeline page — hide only the Add Time + Export buttons (right flex), keep Calendar + Timezone visible
             'body.dn-on-timeline .controls-row .flex:last-child { display: none !important; }',
+            // C-016: hide Projects nav for employees
+            'body.dn-employee #dn-projects-link { display: none !important; }',
             // Reports direct link active state
             '#dn-reports-link > .at-menu__item-link { position: relative; }',
             '#dn-reports-link > .at-menu__item-link.dn-active { color: #2e2ef9 !important; }',
@@ -47,13 +49,21 @@
         document.head.appendChild(style);
     }
 
-    function canViewTeam() {
+    function getUser() {
         var el = document.getElementById('app');
         var vm = el && el.__vue__;
         var store = vm ? vm.$store : null;
-        if (!store) return false;
-        var user = store.getters['user/user'];
+        return store ? store.getters['user/user'] : null;
+    }
+
+    function canViewTeam() {
+        var user = getUser();
         return !!(user && user.can_view_team_tab);
+    }
+
+    function isEmployee() {
+        var user = getUser();
+        return !!(user && parseInt(user.role_id, 10) === 2);
     }
 
     function isOnTeamPage() {
@@ -159,6 +169,13 @@
             document.body.classList.add('dn-on-timeline');
         } else {
             document.body.classList.remove('dn-on-timeline');
+        }
+
+        // C-016: hide Projects nav for employees (role_id=2)
+        if (isEmployee()) {
+            document.body.classList.add('dn-employee');
+        } else {
+            document.body.classList.remove('dn-employee');
         }
     }
 

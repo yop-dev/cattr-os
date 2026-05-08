@@ -11,7 +11,6 @@
     var _jspdfLoaded  = false;
     var _jspdfLoading = false;
     var _jspdfQueue   = [];
-    var _tzCache     = null;  // cached once Vue store has companyData
 
     // ── helpers ────────────────────────────────────────────────────────────
 
@@ -21,26 +20,6 @@
 
     function getToken() {
         return localStorage.getItem('access_token');
-    }
-
-    function getCompanyTimezone() {
-        if (_tzCache) return _tzCache;
-        // PHP-injected at page render — available before any JS runs, no race condition.
-        try {
-            var serverTz = window.__cattrTz;
-            if (serverTz && serverTz !== 'UTC') { _tzCache = serverTz; return serverTz; }
-        } catch (e) {}
-        // Fallback: Vue store (may not be loaded yet on initial render)
-        try {
-            var vm = document.getElementById('app').__vue__;
-            var tz = vm.$store.getters['user/companyData'].timezone;
-            if (tz) { _tzCache = tz; return tz; }
-        } catch (e) {}
-        return serverTz || 'UTC';
-    }
-
-    function waitForCompanyTimezone() {
-        return Promise.resolve(getCompanyTimezone());
     }
 
     function isAdmin() {
@@ -111,15 +90,18 @@
             .replace(/>/g, '&gt;').replace(/"/g, '&quot;');
     }
 
-    function toLocalParts(isoUtc, tz) {
+    // Display timestamps as stored (UTC) without timezone conversion, matching
+    // native Cattr's Team page and screenshot modal behaviour. Revisit after
+    // the desktop agent is fixed to send real UTC (IDEA-002).
+    function toLocalParts(isoUtc) {
         try {
             var d = new Date(normTs(isoUtc));
             var dateParts = new Intl.DateTimeFormat('en-US', {
-                timeZone: tz,
+                timeZone: 'UTC',
                 month: '2-digit', day: '2-digit', year: 'numeric',
             }).formatToParts(d);
             var timeParts = new Intl.DateTimeFormat('en-US', {
-                timeZone: tz,
+                timeZone: 'UTC',
                 hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: true,
             }).formatToParts(d);
             var dm = {}, tm = {};
@@ -133,10 +115,10 @@
         } catch (e) {
             var d2 = new Date(normTs(isoUtc));
             var pad = function (n) { return String(n).padStart(2, '0'); };
-            var h = d2.getHours(), ampm2 = h >= 12 ? 'PM' : 'AM', h12 = h % 12 || 12;
+            var h = d2.getUTCHours(), ampm2 = h >= 12 ? 'PM' : 'AM', h12 = h % 12 || 12;
             return {
-                dateStr: pad(d2.getMonth() + 1) + '/' + pad(d2.getDate()) + '/' + d2.getFullYear(),
-                timeStr: pad(h12) + ':' + pad(d2.getMinutes()) + ':' + pad(d2.getSeconds()) + ampm2,
+                dateStr: pad(d2.getUTCMonth() + 1) + '/' + pad(d2.getUTCDate()) + '/' + d2.getUTCFullYear(),
+                timeStr: pad(h12) + ':' + pad(d2.getUTCMinutes()) + ':' + pad(d2.getUTCSeconds()) + ampm2,
             };
         }
     }
@@ -151,35 +133,6 @@
         var s = secs % 60;
         var p = function (n) { return String(n).padStart(2, '0'); };
         return p(h) + ':' + p(m) + ':' + p(s);
-    }
-
-    // Returns "YYYY-MM-DDTHH:MM" in the given IANA timezone — suitable as a
-    // datetime-local input value. en-CA locale produces ISO date format naturally.
-    function utcToLocalInput(isoUtc, tz) {
-        try {
-            var parts = {};
-            new Intl.DateTimeFormat('en-CA', {
-                timeZone: tz,
-                year: 'numeric', month: '2-digit', day: '2-digit',
-                hour: '2-digit', minute: '2-digit', hour12: false,
-            }).formatToParts(new Date(normTs(isoUtc))).forEach(function (p) { parts[p.type] = p.value; });
-            var h = parts.hour === '24' ? '00' : parts.hour; // Intl quirk: midnight = "24"
-            return parts.year + '-' + parts.month + '-' + parts.day + 'T' + h + ':' + parts.minute;
-        } catch (e) {
-            return isoUtc.slice(0, 16); // fallback: return ISO string trimmed to minute
-        }
-    }
-
-    // Converts a "YYYY-MM-DDTHH:MM" string (in `tz`) to a UTC ISO string.
-    // Strategy: parse as UTC, round-trip through utcToLocalInput to find the
-    // offset, then subtract it. Spring-forward gaps resolve correctly. Fall-back
-    // ambiguity (one hour per year) always picks the pre-transition (earlier UTC)
-    // occurrence — acceptable for a small internal team.
-    function localInputToUtcIso(localStr, tz) {
-        var asUtcMs = new Date(localStr + ':00.000Z').getTime();
-        var roundtrip = utcToLocalInput(new Date(asUtcMs).toISOString(), tz);
-        var roundtripMs = new Date(roundtrip + ':00.000Z').getTime();
-        return new Date(2 * asUtcMs - roundtripMs).toISOString();
     }
 
     function closeEditModal() {
@@ -197,9 +150,8 @@
 
     function openEditModal(iv) {
         closeEditModal();
-        var tz       = getCompanyTimezone();
-        var startVal = utcToLocalInput(iv.start_at || new Date().toISOString(), tz);
-        var endVal   = utcToLocalInput(iv.end_at || new Date().toISOString(), tz);
+        var startVal = normTs(iv.start_at || new Date().toISOString()).slice(0, 16);
+        var endVal   = normTs(iv.end_at   || new Date().toISOString()).slice(0, 16);
         var taskName = iv.task ? (iv.task.task_name || '—') : '—';
         var project  = iv.task && iv.task.project ? iv.task.project.name : '';
 
@@ -216,7 +168,7 @@
             '<label class="dn-edit-label">End' +
             '<input class="dn-edit-input" id="dn-edit-end" type="datetime-local" value="' + esc(endVal) + '">' +
             '</label>' +
-            '<div class="dn-edit-tz">Times shown in ' + esc(tz) + '</div>' +
+            '<div class="dn-edit-tz">Times shown in UTC</div>' +
             '<div class="dn-edit-error" id="dn-edit-error" style="display:none"></div>' +
             '<div class="dn-edit-actions">' +
             '<button class="at-btn at-btn--small" id="dn-edit-cancel">Cancel</button>' +
@@ -250,8 +202,8 @@
             saveBtn.disabled = true;
             saveBtn.textContent = 'Saving…';
 
-            var startIso = localInputToUtcIso(startInput, tz);
-            var endIso   = localInputToUtcIso(endInput, tz);
+            var startIso = startInput + ':00.000Z';
+            var endIso   = endInput   + ':00.000Z';
 
             saveEdit(iv.id, startIso, endIso).then(function () {
                 closeEditModal();
@@ -303,9 +255,9 @@
         });
     }
 
-    function loadAndExportPDF(intervals, dates, tz, btn) {
+    function loadAndExportPDF(intervals, dates, btn) {
         if (_jspdfLoading) return; // prevent double-download while CDN is loading
-        if (_jspdfLoaded) { doExportPDF(intervals, dates, tz); return; }
+        if (_jspdfLoaded) { doExportPDF(intervals, dates); return; }
         _jspdfLoading = true;
         if (btn) { btn.disabled = true; btn.textContent = 'Loading…'; }
         loadScript('https://cdn.jsdelivr.net/npm/jspdf@2.5.1/dist/jspdf.umd.min.js')
@@ -316,7 +268,7 @@
                 _jspdfLoaded  = true;
                 _jspdfLoading = false;
                 if (btn) { btn.disabled = false; btn.textContent = 'Export PDF'; }
-                doExportPDF(intervals, dates, tz);
+                doExportPDF(intervals, dates);
                 _jspdfQueue.forEach(function (fn) { fn(); });
                 _jspdfQueue = [];
             })
@@ -327,7 +279,7 @@
             });
     }
 
-    function doExportPDF(intervals, dates, tz) {
+    function doExportPDF(intervals, dates) {
         var jsPDF = window.jspdf && window.jspdf.jsPDF;
         if (!jsPDF) { window.print(); return; }
         var total = intervals.reduce(function (s, iv) {
@@ -351,8 +303,8 @@
 
         var rows = intervals.map(function (iv) {
             var secs     = durationSecs(iv.start_at, iv.end_at);
-            var sp       = toLocalParts(iv.start_at, tz);
-            var ep       = toLocalParts(iv.end_at,   tz);
+            var sp       = toLocalParts(iv.start_at);
+            var ep       = toLocalParts(iv.end_at);
             var taskName = iv.task ? (iv.task.task_name || '—') : '—';
             var project  = iv.task && iv.task.project ? iv.task.project.name : '';
             var userName = iv.user ? (iv.user.full_name || '') : '';
@@ -381,7 +333,7 @@
 
     // ── render ─────────────────────────────────────────────────────────────
 
-    function buildContent(intervals, dates, truncated, tz) {
+    function buildContent(intervals, dates, truncated) {
         var total = intervals.reduce(function (s, iv) {
             return s + durationSecs(iv.start_at, iv.end_at);
         }, 0);
@@ -395,7 +347,7 @@
         var btn = document.createElement('button');
         btn.className = 'at-btn at-btn--primary at-btn--small';
         btn.textContent = 'Export PDF';
-        btn.addEventListener('click', function () { loadAndExportPDF(intervals, dates, tz, btn); });
+        btn.addEventListener('click', function () { loadAndExportPDF(intervals, dates, btn); });
         bar.appendChild(btn);
         wrap.appendChild(bar);
 
@@ -437,8 +389,8 @@
         var tbody = document.createElement('tbody');
         intervals.forEach(function (iv) {
             var secs       = durationSecs(iv.start_at, iv.end_at);
-            var sp         = toLocalParts(iv.start_at, tz);
-            var ep         = toLocalParts(iv.end_at,   tz);
+            var sp         = toLocalParts(iv.start_at);
+            var ep         = toLocalParts(iv.end_at);
             var taskName   = iv.task ? (iv.task.task_name || '—') : '—';
             var project    = iv.task && iv.task.project ? iv.task.project.name : '';
             var userName   = iv.user ? (iv.user.full_name || '') : '';
@@ -503,16 +455,11 @@
         container.innerHTML = '<p class="dn-tc-loading">Loading…</p>';
 
         try {
-            var result = await Promise.all([
-                fetchIntervals(dates.start, dates.end, userIds),
-                waitForCompanyTimezone(),
-            ]);
-            var intervals = result[0];
-            var tz        = result[1];
+            var intervals = await fetchIntervals(dates.start, dates.end, userIds);
             container = document.getElementById(CONTAINER_ID);
             if (!container) return; // navigated away during fetch
             container.innerHTML = '';
-            container.appendChild(buildContent(intervals.rows, dates, intervals.truncated, tz));
+            container.appendChild(buildContent(intervals.rows, dates, intervals.truncated));
         } finally {
             _fetching = false;
         }
