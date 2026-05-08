@@ -191,7 +191,8 @@
                 var localAtGuess = new Intl.DateTimeFormat('en-CA', {
                     timeZone: tz,
                     year: 'numeric', month: '2-digit', day: '2-digit',
-                    hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false
+                    hour: '2-digit', minute: '2-digit', second: '2-digit',
+                    hour12: false, hourCycle: 'h23'  // h23 avoids '24:00:00' in some engines
                 }).format(new Date(guessMs)).replace(', ', 'T');
                 var localMs = new Date(localAtGuess + 'Z').getTime();
                 guessMs += new Date(localIso + 'Z').getTime() - localMs;
@@ -444,10 +445,14 @@
 
         fetchIntervals(dateStr, userIds || [], projectIds || [])
             .then(function (intervals) {
+                // _allIntervals: screenshot-bearing only (lightbox nav)
+                // renderGroups gets the full list so no-screenshot intervals render dimmed
                 _allIntervals = intervals.filter(function (iv) { return iv.has_screenshot; });
                 renderGroups(intervals);
             })
             .catch(function (e) {
+                // Reset keys so the same selection retries on the next tick
+                currentDate = currentUserIds = currentProjectIds = null;
                 var c = document.getElementById(CONTAINER_ID);
                 if (c) c.innerHTML = '<p class="sc-error">Failed to load screenshots: ' + escapeHtml(e.message) + '</p>';
             })
