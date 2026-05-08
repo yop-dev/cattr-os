@@ -15,6 +15,8 @@
             flex-wrap: nowrap !important;
             align-items: center;
         }
+        /* Hide screenshot selection checkboxes on dashboard */
+        .screenshot__checkbox { display: none !important; }
     </style>
 </head>
 <body>
