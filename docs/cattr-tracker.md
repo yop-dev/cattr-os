@@ -21,7 +21,7 @@ All planned changes and known bugs for the Cattr deployment. Customisations are 
 | C-015 | Screenshots + Team page dropdown UX — hide Active/Inactive tabs, role filter; add Apply buttons | ✅ Done | Low |
 | C-016 | Hide Projects nav item for employees — keep visible for Admin/Manager/Auditor only | ✅ Done | Medium |
 | C-017 | Screenshots page — improve organization to show clear 5-minute grouped sequences (Clockify-style) | ✅ Done | Medium |
-| C-018 | Timecard export — Duration column: single-line format "HH:MM:SS · 10:00 AM → 10:05 AM" | ⏳ Pending | Low |
+| C-018 | Timecard export — Duration column: single-line format "HH:MM:SS · 10:00 AM → 10:05 AM" | ✅ Done | Low |
 
 ---
 
@@ -592,31 +592,40 @@ Fix: set `_fetching = true`, `currentStart`, `currentEnd` ALL before the first D
 
 ### C-018 — Timecard export: single-line duration format
 
-**Status:** ⏳ Pending
+**Status:** ✅ Done — confirmed working 2026-05-08
 **Priority:** Low
 
 #### Requirement
 
-In the timecard export table (C-013), the Duration column currently renders the total duration and the time slot on separate lines. It should be condensed into a single line so rows are compact and easier to scan.
+In the timecard export table (C-013), the Duration column currently rendered the total duration and the time slot on separate lines. Condensed into a single line so rows are compact and easier to scan.
 
-#### Target format
-
-```
-1h 05m · 10:00 AM → 11:05 AM
-```
-
-or equivalent — duration + from/to time on one line, separated by a divider.
-
-#### What needs to change
+#### What was done
 
 **Frontend — `app/public/timecard-export.js`**
 
-Update the Duration cell rendering in the table builder. Currently the cell likely uses a `<br>` or block-level element to separate the two values. Replace with inline formatting — e.g. `${duration} · ${startTime} → ${endTime}` in a single text node or `<span>`.
+Three changes:
+
+**HTML cell** — replaced two-block layout with single inline string:
+```javascript
+'<td class="dn-tc-col-dur">' +
+    esc(fmtDuration(secs)) + ' · ' + esc(sp.timeStr) + ' → ' + esc(ep.timeStr) +
+'</td>'
+```
+
+**PDF row** — changed `\n` separator to ` · ` and ` – ` to ` → ` to match HTML:
+```javascript
+fmtDuration(secs) + ' · ' + sp.timeStr + ' → ' + ep.timeStr
+```
+
+**CSS** — removed dead `.dn-tc-durval` and `.dn-tc-timeslot` rules (no longer rendered), merged into single `.dn-tc-col-dur` rule:
+```javascript
+'.dn-tc-col-dur { white-space: nowrap; font-weight: 500; color: #1a1a2e; }'
+```
 
 #### Test
 
-- [ ] Timecard export table → Duration column shows duration and time range on one line per row
-- [ ] PDF export → single-line duration renders correctly in the generated PDF
+- [x] Timecard export table → Duration column shows duration and time range on one line per row ✅
+- [x] PDF export → single-line duration renders correctly in the generated PDF ✅
 
 ---
 
@@ -783,6 +792,7 @@ Neither option is clean enough. Option A requires distributing a patched `.exe` 
 | BUG-004 | Projects "Create" button not visible on first load after login | ✅ Fixed | Medium |
 | BUG-005 | Task "Create" button never visible for employees even when assigned to a project | ✅ Fixed | High |
 | BUG-006 | Company Settings — Actions column buttons misaligned across all settings list pages | ✅ Fixed | Medium |
+| BUG-007 | Reports page ignores user filter on initial load — shows all users instead of selected one | ✅ Fixed | Medium |
 
 ---
 
@@ -1027,3 +1037,59 @@ This prevents button wrapping regardless of how narrow the actions column become
 - [x] Log in as admin → Company Settings > Users → each row shows eye + edit buttons inline ✅
 - [x] Log in as admin → Company Settings > Statuses → each row shows edit + delete inline ✅
 - [x] Log in as admin → Company Settings > Priorities → each row shows edit + delete inline (regression — was never broken) ✅
+
+---
+
+### BUG-007 — Reports page ignores user filter on initial load
+
+**Status:** ✅ Fixed — 2026-05-08
+**Discovered:** 2026-05-08
+**Severity:** Medium — report always loads all-users data first, even when "1 user selected" is shown
+
+#### Symptom
+
+Navigating to the Reports page with a user already selected (e.g. "1 user selected") caused the timecard table to load all users' data. The filter dropdown showed the correct selection, but the table ignored it and showed every user's intervals.
+
+#### Root Cause
+
+The `tick()` guard in `timecard-export.js` only re-rendered when the selected date range changed (`dates.start !== currentStart || dates.end !== currentEnd`). It did not track user selection changes.
+
+On initial navigation to the page, Vue's `UserSelect` component restores its selection from store state asynchronously. The first `tick()` fire saw `userIds = []` (not yet restored), fetched all-users data, and set `currentStart` / `currentEnd`. By the time `UserSelect` restored its value and the MutationObserver fired again, the date guard saw no change and skipped the re-fetch.
+
+#### Fix Applied
+
+**`app/public/timecard-export.js`**
+
+Added `currentUserIds` state variable tracking, mirroring the pattern already used by `screenshots-grouped.js`:
+
+```javascript
+// State variable
+var currentUserIds = null;
+
+// In renderTimecard() — snapshot before any DOM write:
+currentUserIds = JSON.stringify(userIds.slice().sort());
+
+// In tick() — include user selection in re-fetch guard:
+var userIds    = isAdmin()
+    ? getSelectedUserIds()
+    : (function () { var id = getCurrentUserId(); return id ? [id] : []; }());
+var userIdsKey = JSON.stringify(userIds.slice().sort());
+if (dates.start !== currentStart || dates.end !== currentEnd || userIdsKey !== currentUserIds) {
+    renderTimecard();
+}
+
+// In cleanup():
+currentUserIds = null;
+```
+
+#### Files Modified
+
+| File | Tracked location |
+|---|---|
+| `app/public/timecard-export.js` | [yop-dev/cattr-os](https://github.com/yop-dev/cattr-os) |
+
+#### Test
+
+- [x] Navigate to Reports with a user pre-selected → table loads only that user's data on first render ✅
+- [x] Change user selection → table re-fetches for new selection ✅
+- [x] No user selected → table shows all users ✅

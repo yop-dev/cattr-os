@@ -5,9 +5,10 @@
     var APPLY_BTN_ID    = 'dn-apply-filter-btn';
     var STYLE_ID        = 'dn-timecard-styles';
     var EDIT_MODAL_ID   = 'dn-edit-modal';
-    var currentStart = null;
-    var currentEnd   = null;
-    var _fetching    = false; // guard against MutationObserver re-entrancy
+    var currentStart   = null;
+    var currentEnd     = null;
+    var currentUserIds = null; // JSON string — re-fetch when selection changes
+    var _fetching      = false; // guard against MutationObserver re-entrancy
     var _jspdfLoaded  = false;
     var _jspdfLoading = false;
     var _jspdfQueue   = [];
@@ -311,7 +312,7 @@
             return [
                 sp.dateStr,
                 project ? taskName + '\n' + project : taskName,
-                fmtDuration(secs) + '\n' + sp.timeStr + ' – ' + ep.timeStr,
+                fmtDuration(secs) + ' · ' + sp.timeStr + ' → ' + ep.timeStr,
                 userName,
             ];
         });
@@ -403,8 +404,7 @@
                     (project ? '<div class="dn-tc-project">' + esc(project) + '</div>' : '') +
                 '</td>' +
                 '<td class="dn-tc-col-dur">' +
-                    '<div class="dn-tc-durval">' + fmtDuration(secs) + '</div>' +
-                    '<div class="dn-tc-timeslot">' + esc(sp.timeStr) + ' – ' + esc(ep.timeStr) + '</div>' +
+                    esc(fmtDuration(secs)) + ' · ' + esc(sp.timeStr) + ' → ' + esc(ep.timeStr) +
                 '</td>' +
                 '<td class="dn-tc-col-user">' + esc(userName) + '</td>';
 
@@ -445,9 +445,10 @@
 
         // Snapshot all state BEFORE touching the DOM — prevents MutationObserver
         // re-entrancy from triggering a second fetch while this one is in flight.
-        _fetching    = true;
-        currentStart = dates.start;
-        currentEnd   = dates.end;
+        _fetching      = true;
+        currentStart   = dates.start;
+        currentEnd     = dates.end;
+        currentUserIds = JSON.stringify(userIds.slice().sort());
 
         var container = document.getElementById(CONTAINER_ID);
         if (!container) { _fetching = false; return; }
@@ -489,9 +490,7 @@
             '.dn-tc-col-date { color: #555; white-space: nowrap; width: 110px; }',
             '.dn-tc-task { font-weight: 500; color: #1a1a2e; line-height: 1.4; }',
             '.dn-tc-project { color: #888; font-size: 0.82rem; margin-top: 3px; }',
-            '.dn-tc-col-dur { white-space: nowrap; }',
-            '.dn-tc-durval { font-weight: 500; color: #1a1a2e; }',
-            '.dn-tc-timeslot { color: #888; font-size: 0.82rem; margin-top: 3px; }',
+            '.dn-tc-col-dur { white-space: nowrap; font-weight: 500; color: #1a1a2e; }',
             '.dn-tc-col-user { color: #555; white-space: nowrap; }',
             '.dn-tc-empty, .dn-tc-loading { color: #999; padding: 24px 0; }',
             '.dn-tc-warning { color: #b45309; background: #fef3c7; border: 1px solid #fcd34d; border-radius: 4px; padding: 10px 14px; font-size: 0.85rem; margin-bottom: 16px; }',
@@ -600,9 +599,10 @@
 
     function cleanup() {
         closeEditModal();
-        _fetching    = false;
-        currentStart = null;
-        currentEnd   = null;
+        _fetching      = false;
+        currentStart   = null;
+        currentEnd     = null;
+        currentUserIds = null;
         _jspdfQueue  = []; // discard any queued exports — page navigated away
         var c = document.getElementById(CONTAINER_ID);
         if (c) c.parentNode.removeChild(c);
@@ -627,7 +627,12 @@
         var dates = getSessionDates();
         if (!dates.start || !dates.end) return;
 
-        if (dates.start !== currentStart || dates.end !== currentEnd) {
+        var userIds    = isAdmin()
+            ? getSelectedUserIds()
+            : (function () { var id = getCurrentUserId(); return id ? [id] : []; }());
+        var userIdsKey = JSON.stringify(userIds.slice().sort());
+
+        if (dates.start !== currentStart || dates.end !== currentEnd || userIdsKey !== currentUserIds) {
             renderTimecard();
         }
     }
