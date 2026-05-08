@@ -45,38 +45,24 @@
 
     // ── Native grid management ─────────────────────────────────────────────
     function hideNativeGrid() {
-        // First try: find the specific grid element and hide it directly.
-        // This is precise and does not touch the filter bar.
-        var grid = document.querySelector('.screenshots-report__content, .screenshots-report .crud__table');
-        if (grid) {
-            if (!grid.dataset.scHidden) {
-                grid.dataset.scHidden = '1';
-                grid.style.display = 'none';
+        // The screenshots page component root is .screenshots
+        // Its direct children:
+        //   h1.page-title      — keep (page header)
+        //   div.controls-row   — keep (filter bar: Calendar, UserSelect, ProjectSelect, TimezonePicker)
+        //   div.at-container   — hide (native thumbnail grid)
+        //   div.screenshots__pagination — hide (native pagination)
+        var page = document.querySelector('.screenshots');
+        if (!page) return;
+        var children = page.children;
+        for (var i = 0; i < children.length; i++) {
+            var child = children[i];
+            if (child.id === CONTAINER_ID || child.id === MODAL_ID) continue;
+            var cls = ' ' + (child.className || '') + ' ';
+            if (cls.indexOf(' at-container ') === -1 && cls.indexOf(' screenshots__pagination ') === -1) continue;
+            if (!child.dataset.scHidden) {
+                child.dataset.scHidden = '1';
+                child.style.display = 'none';
             }
-            return;
-        }
-
-        // Fallback: walk the route component's root el and hide children that are
-        // content areas (not filter controls). We identify filter areas by the
-        // presence of input/select elements inside them.
-        var vm = getVm();
-        if (!vm || !vm.$route) return;
-        var matched = vm.$route.matched;
-        for (var i = matched.length - 1; i >= 0; i--) {
-            var inst = matched[i].instances && matched[i].instances.default;
-            if (!inst || !inst.$el) continue;
-            var children = inst.$el.children;
-            for (var j = 0; j < children.length; j++) {
-                var child = children[j];
-                if (child.id === CONTAINER_ID || child.id === MODAL_ID) continue;
-                // Skip filter bars — they contain inputs/selects/datepickers
-                if (child.querySelector('input, select, .at-select, .at-datepicker')) continue;
-                if (!child.dataset.scHidden) {
-                    child.dataset.scHidden = '1';
-                    child.style.display = 'none';
-                }
-            }
-            return;
         }
     }
 
@@ -193,6 +179,25 @@
         });
     }
 
+    // Fetch an image endpoint that requires Bearer auth; sets img.src to a blob URL.
+    // Revokes the previous object URL if one was stored on img.dataset.blobUrl.
+    function apiFetchImage(img, path) {
+        fetch(path, {
+            method: 'GET',
+            headers: { 'Authorization': 'Bearer ' + localStorage.getItem('access_token') }
+        }).then(function (r) {
+            if (!r.ok) throw new Error('HTTP ' + r.status);
+            return r.blob();
+        }).then(function (blob) {
+            if (img.dataset.blobUrl) URL.revokeObjectURL(img.dataset.blobUrl);
+            var url = URL.createObjectURL(blob);
+            img.dataset.blobUrl = url;
+            img.src = url;
+        }).catch(function () {
+            img.style.display = 'none';
+        });
+    }
+
     function dayBoundsUtc(localDateStr, tz) {
         function localToUtcStr(localIso) {
             var guessMs = new Date(localIso + 'Z').getTime();
@@ -223,7 +228,8 @@
             for (var i = matched.length - 1; i >= 0; i--) {
                 var inst = matched[i].instances && matched[i].instances.default;
                 if (!inst) continue;
-                var d = inst.date || inst.selectedDate || inst.currentDate || inst.startDate;
+                // Screenshots component stores the date as datepickerDateStart (Date object or ISO string)
+                var d = inst.datepickerDateStart || inst.date || inst.selectedDate || inst.currentDate || inst.startDate;
                 if (d) {
                     if (d instanceof Date) {
                         return new Intl.DateTimeFormat('en-CA', { timeZone: tz }).format(d);
@@ -259,9 +265,11 @@
         var matched = vm.$route.matched;
         for (var i = matched.length - 1; i >= 0; i--) {
             var inst = matched[i].instances && matched[i].instances.default;
-            if (inst && Array.isArray(inst.projectIDs)) return inst.projectIDs;
-            if (inst && Array.isArray(inst.projectIds)) return inst.projectIds;
-            if (inst && Array.isArray(inst.projects))   return inst.projects;
+            // Screenshots component stores project IDs as projectsList
+            if (inst && Array.isArray(inst.projectsList)) return inst.projectsList;
+            if (inst && Array.isArray(inst.projectIDs))   return inst.projectIDs;
+            if (inst && Array.isArray(inst.projectIds))   return inst.projectIds;
+            if (inst && Array.isArray(inst.projects))     return inst.projects;
         }
         return [];
     }
@@ -349,10 +357,9 @@
 
         if (hasShot) {
             var img = document.createElement('img');
-            img.src     = '/api/time-intervals/' + iv.id + '/thumbnail';
-            img.alt     = taskName;
-            img.loading = 'lazy';
+            img.alt = taskName;
             imgWrap.appendChild(img);
+            apiFetchImage(img, '/api/time-intervals/' + iv.id + '/thumb');
             card.addEventListener('click', function () { openModal(iv.id); });
         } else {
             var placeholder = document.createElement('div');
@@ -545,7 +552,9 @@
             iv.user && iv.user.full_name
         ].filter(Boolean).join(' · ');
 
-        document.getElementById('sc-modal-img').src = '/api/time-intervals/' + iv.id + '/screenshot';
+        var modalImg = document.getElementById('sc-modal-img');
+        modalImg.src = '';
+        apiFetchImage(modalImg, '/api/time-intervals/' + iv.id + '/screenshot');
 
         document.getElementById('sc-modal-prev').disabled = (idx <= 0);
         document.getElementById('sc-modal-next').disabled = (idx >= _allIntervals.length - 1);

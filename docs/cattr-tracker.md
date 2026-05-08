@@ -634,11 +634,17 @@ New standalone IIFE `app/public/screenshots-grouped.js` injected via `app.blade.
 **Key features:**
 - Screenshots grouped into 1-hour buckets by `start_at` timestamp in company timezone (`window.__cattrTz`)
 - 6-column CSS grid per block (matching native density), items sorted ascending within each hour
-- Thumbnail cards: task name, project name (Cattr blue), timestamp; lazy-loaded `<img>` from `/api/time-intervals/{id}/thumbnail`
+- Thumbnail cards: task name, project name (Cattr blue), timestamp; images fetched via `apiFetchImage()` with Bearer auth → blob URL (direct `<img src>` fails — API requires Authorization header)
 - Intervals without screenshot shown dimmed (opacity 0.45), not clickable
-- Clicking a card opens a lightbox modal with full screenshot (`/api/time-intervals/{id}/screenshot`), header info (task · project · time range · user), Prev/Next navigation, keyboard support (Escape, ←, →)
+- Clicking a card opens a lightbox modal with full screenshot, header info (task · project · time range · user), Prev/Next navigation, keyboard support (Escape, ←, →)
 - Delete button visible to admin (role_id=0) and manager (role_id=1) only; calls `POST /api/time-intervals/remove`, removes card from grid, updates block count
 - Native filter controls (date, user, project) are read via `vm.$route.matched` instances and trigger re-fetch on change
+
+**Implementation notes (from bundle analysis):**
+- Native page DOM: `.screenshots` is the component root; direct children are `h1.page-title`, `div.controls-row` (filters — keep visible), `div.at-container` (native grid — hide), `div.screenshots__pagination` (hide). Earlier attempts to walk all children and guess which to hide failed because AT-UI components hadn't rendered their internal `<input>` elements when the observer fired.
+- Thumbnail endpoint is `/api/time-intervals/{id}/thumb` (not `/thumbnail`) — confirmed from compiled bundle and route file.
+- Screenshots component stores the selected date as `inst.datepickerDateStart` (not `date`/`selectedDate`/`startDate`) and project filter as `inst.projectsList` (not `projectIDs`). Getting these wrong caused the view to always show today's date regardless of the picker.
+- `has_screenshot` is a real appended attribute on `TimeInterval` model (`$appends`); the accessor returns true when the screenshot file exists on disk at `storage/app/screenshots/{sha256(id)}.jpg`.
 
 **Files changed:**
 - `app/public/screenshots-grouped.js` — new file
