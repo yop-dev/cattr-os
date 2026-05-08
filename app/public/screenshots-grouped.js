@@ -168,6 +168,114 @@
         document.head.appendChild(style);
     }
 
+    // ── API ────────────────────────────────────────────────────────────────
+    function apiFetch(path, body) {
+        return fetch(path, {
+            method:  'POST',
+            headers: {
+                'Content-Type':  'application/json',
+                'Authorization': 'Bearer ' + localStorage.getItem('access_token'),
+                'Accept':        'application/json'
+            },
+            body: JSON.stringify(body)
+        }).then(function (r) {
+            if (!r.ok) throw new Error('HTTP ' + r.status);
+            return r.json();
+        });
+    }
+
+    function dayBoundsUtc(localDateStr, tz) {
+        function localToUtcStr(localIso) {
+            var guessMs = new Date(localIso + 'Z').getTime();
+            for (var i = 0; i < 2; i++) {
+                var localAtGuess = new Intl.DateTimeFormat('en-CA', {
+                    timeZone: tz,
+                    year: 'numeric', month: '2-digit', day: '2-digit',
+                    hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false
+                }).format(new Date(guessMs)).replace(', ', 'T');
+                var localMs = new Date(localAtGuess + 'Z').getTime();
+                guessMs += new Date(localIso + 'Z').getTime() - localMs;
+            }
+            return new Date(guessMs).toISOString().slice(0, 19).replace('T', ' ');
+        }
+        return [
+            localToUtcStr(localDateStr + 'T00:00:00'),
+            localToUtcStr(localDateStr + 'T23:59:59')
+        ];
+    }
+
+    // ── Filter readers ─────────────────────────────────────────────────────
+    function getSelectedDate() {
+        var vm = getVm();
+        var tz = getCompanyTimezone();
+        if (vm && vm.$route) {
+            var matched = vm.$route.matched;
+            for (var i = matched.length - 1; i >= 0; i--) {
+                var inst = matched[i].instances && matched[i].instances.default;
+                if (!inst) continue;
+                var d = inst.date || inst.selectedDate || inst.currentDate || inst.startDate;
+                if (d) {
+                    if (d instanceof Date) {
+                        return new Intl.DateTimeFormat('en-CA', { timeZone: tz }).format(d);
+                    }
+                    if (typeof d === 'string' && d.length >= 10) return d.slice(0, 10);
+                }
+            }
+        }
+        var picker = document.querySelector('.at-datepicker__input, input[class*="datepicker"]');
+        if (picker && picker.value) {
+            var parsed = new Date(picker.value);
+            if (!isNaN(parsed)) return new Intl.DateTimeFormat('en-CA', { timeZone: tz }).format(parsed);
+        }
+        return new Intl.DateTimeFormat('en-CA', { timeZone: tz }).format(new Date());
+    }
+
+    function getSelectedUserIds() {
+        var vm = getVm();
+        if (!vm || !vm.$route) return [];
+        var matched = vm.$route.matched;
+        for (var i = matched.length - 1; i >= 0; i--) {
+            var inst = matched[i].instances && matched[i].instances.default;
+            if (inst && Array.isArray(inst.userIDs))  return inst.userIDs;
+            if (inst && Array.isArray(inst.userIds))  return inst.userIds;
+            if (inst && Array.isArray(inst.users))    return inst.users;
+        }
+        return [];
+    }
+
+    function getSelectedProjectIds() {
+        var vm = getVm();
+        if (!vm || !vm.$route) return [];
+        var matched = vm.$route.matched;
+        for (var i = matched.length - 1; i >= 0; i--) {
+            var inst = matched[i].instances && matched[i].instances.default;
+            if (inst && Array.isArray(inst.projectIDs)) return inst.projectIDs;
+            if (inst && Array.isArray(inst.projectIds)) return inst.projectIds;
+            if (inst && Array.isArray(inst.projects))   return inst.projects;
+        }
+        return [];
+    }
+
+    // ── Data fetch ─────────────────────────────────────────────────────────
+    function fetchIntervals(dateStr, userIds, projectIds) {
+        var tz     = getCompanyTimezone();
+        var bounds = dayBoundsUtc(dateStr, tz);
+
+        var where = { start_at: ['between', bounds] };
+        if (userIds.length   > 0) where.user_id    = ['=', userIds];
+        if (projectIds.length > 0) where.project_id = ['=', projectIds];
+
+        return apiFetch('/api/time-intervals/list', {
+            with:    ['task', 'task.project', 'user'],
+            where:   where,
+            orderBy: ['start_at', 'asc'],
+            perPage: 1000
+        }).then(function (data) {
+            if (!data || !Array.isArray(data.data)) throw new Error('Unexpected response shape');
+            return data.data;
+        });
+    }
+
     // ── Time / bucketing helpers ───────────────────────────────────────────
     function toLocalParts(utcStr, tz) {
         var d = new Date(normTs(utcStr));
@@ -309,27 +417,49 @@
         });
     }
 
-    // ── Tick ───────────────────────────────────────────────────────────────
+    // ── Render / Tick ──────────────────────────────────────────────────────
+    function renderScreenshots() {
+        if (_fetching) return;
+
+        var dateStr    = getSelectedDate();
+        var userIds    = getSelectedUserIds();
+        var projectIds = getSelectedProjectIds();
+        if (!dateStr) return;
+
+        var dateKey = dateStr;
+        var userKey = JSON.stringify((userIds    || []).slice().sort());
+        var projKey = JSON.stringify((projectIds || []).slice().sort());
+
+        if (dateKey === currentDate && userKey === currentUserIds && projKey === currentProjectIds) return;
+
+        // Set ALL state before first DOM write (MutationObserver re-entrancy guard)
+        _fetching         = true;
+        currentDate       = dateKey;
+        currentUserIds    = userKey;
+        currentProjectIds = projKey;
+
+        var container = injectContainer();
+        if (!container) { _fetching = false; return; }
+        container.innerHTML = '<p class="sc-loading">Loading…</p>';
+
+        fetchIntervals(dateStr, userIds || [], projectIds || [])
+            .then(function (intervals) {
+                _allIntervals = intervals.filter(function (iv) { return iv.has_screenshot; });
+                renderGroups(intervals);
+            })
+            .catch(function (e) {
+                var c = document.getElementById(CONTAINER_ID);
+                if (c) c.innerHTML = '<p class="sc-error">Failed to load screenshots: ' + escapeHtml(e.message) + '</p>';
+            })
+            .then(function () { _fetching = false; });
+    }
+
     function tick() {
         if (!isOnScreenshots()) { cleanup(); return; }
         injectCSS();
         hideNativeGrid();
-        var container = injectContainer();
-        if (!container) return;
-
-        // MOCK DATA — replaced by renderScreenshots() in Task 3
-        if (container.innerHTML === '') {
-            renderGroups([
-                { id: 1, has_screenshot: true,  start_at: '2026-05-08 16:03:00', end_at: '2026-05-08 16:08:00',
-                  task: { task_name: 'Tracking POs', project: { name: 'Shipping' } }, user: { full_name: 'Jane' } },
-                { id: 2, has_screenshot: true,  start_at: '2026-05-08 16:08:00', end_at: '2026-05-08 16:13:00',
-                  task: { task_name: 'Tracking POs', project: { name: 'Shipping' } }, user: { full_name: 'Jane' } },
-                { id: 3, has_screenshot: false, start_at: '2026-05-08 16:22:00', end_at: '2026-05-08 16:27:00',
-                  task: { task_name: 'Checking Emails', project: { name: 'Admin' } }, user: { full_name: 'Jane' } },
-                { id: 4, has_screenshot: true,  start_at: '2026-05-08 17:05:00', end_at: '2026-05-08 17:10:00',
-                  task: { task_name: 'Invoice Review', project: { name: 'Finance' } }, user: { full_name: 'Jane' } },
-            ]);
-        }
+        injectContainer();
+        renderScreenshots();
     }
 
     function init() {
