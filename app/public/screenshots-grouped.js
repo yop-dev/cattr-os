@@ -168,13 +168,163 @@
         document.head.appendChild(style);
     }
 
-    // ── Stub for tick (filled in later tasks) ─────────────────────────────
+    // ── Time / bucketing helpers ───────────────────────────────────────────
+    function toLocalParts(utcStr, tz) {
+        var d = new Date(normTs(utcStr));
+        // 12-hour time string for display: "9:03 AM"
+        var timeStr = new Intl.DateTimeFormat('en-US', {
+            timeZone: tz, hour: 'numeric', minute: '2-digit', hour12: true
+        }).format(d);
+
+        // 24-hour hour digit for bucketing (Intl can return "24" for midnight — normalise)
+        var h24raw = parseInt(
+            new Intl.DateTimeFormat('en-US', { timeZone: tz, hour: '2-digit', hour12: false }).format(d),
+            10
+        );
+        var hour24 = (h24raw === 24) ? 0 : h24raw;
+
+        return { hour24: hour24, timeStr: timeStr };
+    }
+
+    function formatHourLabel(hour24) {
+        function fmt12(h) {
+            var ampm = h < 12 ? 'AM' : 'PM';
+            var h12  = h % 12 || 12;
+            return h12 + ':00 ' + ampm;
+        }
+        return fmt12(hour24) + ' – ' + fmt12((hour24 + 1) % 24);
+    }
+
+    // ── Grouping ───────────────────────────────────────────────────────────
+    function groupByHour(intervals, tz) {
+        var buckets = {};  // hour24 → [{interval, localParts}]
+        var order   = [];
+
+        intervals.forEach(function (iv) {
+            var parts = toLocalParts(iv.start_at, tz);
+            var h     = parts.hour24;
+            if (!buckets[h]) { buckets[h] = []; order.push(h); }
+            buckets[h].push({ interval: iv, localParts: parts });
+        });
+
+        order.sort(function (a, b) { return a - b; });
+        return order.map(function (h) { return { hour24: h, items: buckets[h] }; });
+    }
+
+    // ── DOM builders ───────────────────────────────────────────────────────
+    function buildThumbnailCard(iv, localParts) {
+        var hasShot     = !!iv.has_screenshot;
+        var taskName    = (iv.task && iv.task.task_name)                      || '—';
+        var projectName = (iv.task && iv.task.project && iv.task.project.name) || '';
+
+        var card = document.createElement('div');
+        card.className         = 'sc-card' + (hasShot ? '' : ' sc-card--no-shot');
+        card.dataset.intervalId = String(iv.id);
+
+        var imgWrap = document.createElement('div');
+        imgWrap.className = 'sc-card__thumb';
+
+        if (hasShot) {
+            var img = document.createElement('img');
+            img.src     = '/api/time-intervals/' + iv.id + '/thumbnail';
+            img.alt     = taskName;
+            img.loading = 'lazy';
+            imgWrap.appendChild(img);
+            card.addEventListener('click', function () { openModal(iv.id); });
+        } else {
+            var placeholder = document.createElement('div');
+            placeholder.className   = 'sc-card__no-shot-label';
+            placeholder.textContent = 'No screenshot';
+            imgWrap.appendChild(placeholder);
+        }
+        card.appendChild(imgWrap);
+
+        var caption = document.createElement('div');
+        caption.className = 'sc-card__caption';
+        caption.innerHTML =
+            '<div class="sc-card__task">'    + escapeHtml(taskName)    + '</div>' +
+            '<div class="sc-card__project">' + escapeHtml(projectName) + '</div>' +
+            '<div class="sc-card__time">'    + escapeHtml(localParts.timeStr) + '</div>';
+        card.appendChild(caption);
+
+        return card;
+    }
+
+    function buildHourBlock(hour24, items) {
+        var shotCount = items.filter(function (i) { return i.interval.has_screenshot; }).length;
+
+        var block  = document.createElement('div');
+        block.className = 'sc-block';
+
+        var header = document.createElement('div');
+        header.className = 'sc-block__header';
+        header.innerHTML =
+            '<span class="sc-block__label">' + formatHourLabel(hour24) + '</span>' +
+            '<span class="sc-block__count">' + shotCount + ' screenshot' + (shotCount !== 1 ? 's' : '') + '</span>' +
+            '<div class="sc-block__rule"></div>';
+        block.appendChild(header);
+
+        var grid = document.createElement('div');
+        grid.className = 'sc-grid';
+        items.forEach(function (item) {
+            grid.appendChild(buildThumbnailCard(item.interval, item.localParts));
+        });
+        block.appendChild(grid);
+
+        return block;
+    }
+
+    // ── Render ─────────────────────────────────────────────────────────────
+    function renderGroups(intervals) {
+        var container = document.getElementById(CONTAINER_ID);
+        if (!container) return;
+
+        var tz     = getCompanyTimezone();
+        var groups = groupByHour(intervals, tz);
+
+        container.innerHTML = '';
+
+        if (intervals.length >= 1000) {
+            var warn = document.createElement('p');
+            warn.className   = 'sc-warning';
+            warn.textContent = 'Showing first 1000 intervals. Narrow the date range to see all.';
+            container.appendChild(warn);
+        }
+
+        if (groups.length === 0) {
+            var empty = document.createElement('p');
+            empty.className   = 'sc-empty';
+            empty.textContent = 'No screenshots found for this date.';
+            container.appendChild(empty);
+            return;
+        }
+
+        groups.forEach(function (group) {
+            container.appendChild(buildHourBlock(group.hour24, group.items));
+        });
+    }
+
+    // ── Tick ───────────────────────────────────────────────────────────────
     function tick() {
         if (!isOnScreenshots()) { cleanup(); return; }
         injectCSS();
         hideNativeGrid();
-        injectContainer();
-        // renderScreenshots() added in Task 3
+        var container = injectContainer();
+        if (!container) return;
+
+        // MOCK DATA — replaced by renderScreenshots() in Task 3
+        if (container.innerHTML === '') {
+            renderGroups([
+                { id: 1, has_screenshot: true,  start_at: '2026-05-08 16:03:00', end_at: '2026-05-08 16:08:00',
+                  task: { task_name: 'Tracking POs', project: { name: 'Shipping' } }, user: { full_name: 'Jane' } },
+                { id: 2, has_screenshot: true,  start_at: '2026-05-08 16:08:00', end_at: '2026-05-08 16:13:00',
+                  task: { task_name: 'Tracking POs', project: { name: 'Shipping' } }, user: { full_name: 'Jane' } },
+                { id: 3, has_screenshot: false, start_at: '2026-05-08 16:22:00', end_at: '2026-05-08 16:27:00',
+                  task: { task_name: 'Checking Emails', project: { name: 'Admin' } }, user: { full_name: 'Jane' } },
+                { id: 4, has_screenshot: true,  start_at: '2026-05-08 17:05:00', end_at: '2026-05-08 17:10:00',
+                  task: { task_name: 'Invoice Review', project: { name: 'Finance' } }, user: { full_name: 'Jane' } },
+            ]);
+        }
     }
 
     function init() {
