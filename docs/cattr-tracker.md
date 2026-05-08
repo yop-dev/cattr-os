@@ -19,8 +19,8 @@ All planned changes and known bugs for the Cattr deployment. Customisations are 
 | C-013 | Timecard export — per-interval PDF export on Time Use Report page (Clockify-style table) | ✅ Done | Medium |
 | C-014 | Hide Calendar nav item (Planned Time — not used by team) | ✅ Done | Low |
 | C-015 | Screenshots + Team page dropdown UX — hide Active/Inactive tabs, role filter; add Apply buttons | ✅ Done | Low |
-| C-016 | Hide Projects nav item for employees — keep visible for Admin/Manager/Auditor only | ⏳ Pending | Medium |
-| C-017 | Screenshots page — improve organization to show clear 5-minute grouped sequences (Clockify-style) | ⏳ Pending | Medium |
+| C-016 | Hide Projects nav item for employees — keep visible for Admin/Manager/Auditor only | ✅ Done | Medium |
+| C-017 | Screenshots page — improve organization to show clear 5-minute grouped sequences (Clockify-style) | ✅ Done | Medium |
 | C-018 | Timecard export — Duration column: single-line format "HH:MM:SS · 10:00 AM → 10:05 AM" | ⏳ Pending | Low |
 
 ---
@@ -622,46 +622,80 @@ Update the Duration cell rendering in the table builder. Currently the cell like
 
 ### C-017 — Screenshots page: improve organization to Clockify-style grouped sequences
 
-**Status:** ⏳ Pending
+**Status:** ✅ Done — confirmed working 2026-05-08
 **Priority:** Medium
 
-#### Requirement
+#### What was done
 
-Screenshots are captured every 5 minutes (matching Clockify's cadence) but the current Screenshots page presents them in a way that feels scattered and hard to review. Clockify groups screenshots into clear, structured 5-minute blocks that are easy to scan chronologically.
+New standalone IIFE `app/public/screenshots-grouped.js` injected via `app.blade.php` and `Dockerfile`. Same pattern as `timecard-export.js`. Activates only on `/screenshots`, hides the native grid, and renders a custom grouped view.
 
-Goal: make the Screenshots page feel organized and reviewable — screenshots should be grouped in a clean sequence so a manager can quickly scan a user's session the same way they would in Clockify.
+**Architecture:** MutationObserver SPA route detection → hide native grid → inject `#sc-grouped-container` → fetch from `POST /api/time-intervals/list` → render hour blocks.
 
-#### Current behavior
+**Key features:**
+- Screenshots grouped into 1-hour buckets by `start_at` timestamp in company timezone (`window.__cattrTz`)
+- 6-column CSS grid per block (matching native density), items sorted ascending within each hour
+- Thumbnail cards: task name, project name (Cattr blue), timestamp; lazy-loaded `<img>` from `/api/time-intervals/{id}/thumbnail`
+- Intervals without screenshot shown dimmed (opacity 0.45), not clickable
+- Clicking a card opens a lightbox modal with full screenshot (`/api/time-intervals/{id}/screenshot`), header info (task · project · time range · user), Prev/Next navigation, keyboard support (Escape, ←, →)
+- Delete button visible to admin (role_id=0) and manager (role_id=1) only; calls `POST /api/time-intervals/remove`, removes card from grid, updates block count
+- Native filter controls (date, user, project) are read via `vm.$route.matched` instances and trigger re-fetch on change
 
-- Screenshots exist and are captured correctly at ~5-minute intervals
-- The page layout does not group or visually sequence them in a predictable timeline structure
-- Browsing a user's screenshots feels disorganized compared to Clockify's structured view
+**Files changed:**
+- `app/public/screenshots-grouped.js` — new file
+- `app/resources/views/app.blade.php` — script tag added (line 36)
+- `Dockerfile` — COPY added (line 47)
 
-#### What needs to change
+#### Test checklist
 
-Needs investigation to determine what's driving the disorganized appearance:
-- Are screenshots missing consistent time-slot labels (e.g. "10:00–10:05")?
-- Are they sorted inconsistently or missing a clear chronological grouping by session/day?
-- Is it a layout issue (grid vs. timeline) or a data grouping issue?
-
-Once investigated, likely approach is a frontend overlay (same pattern as `timecard-export.js`) that restructures the screenshot view into labeled time-block groups.
-
-#### Reference
-
-Clockify's screenshot review shows each interval as a labeled block with timestamp, making it easy to verify a full work session at a glance. That structure is the target UX.
-
-#### Test
-
-- [ ] Screenshots page → entries appear grouped in clear 5-minute labeled blocks
-- [ ] Blocks are in chronological order within each session/day
-- [ ] Manager can scan a full user session without losing track of sequence
+- [x] Navigate to Screenshots → custom grouped view renders, native grid hidden
+- [x] Screenshots appear in hour blocks with correct labels (e.g. "9:00 AM – 10:00 AM")
+- [x] Within each block, screenshots in ascending time order (oldest first)
+- [x] Thumbnail shows task name, project name (blue), timestamp
+- [x] Intervals with no screenshot shown dimmed, not clickable
+- [x] Change date → view re-fetches and re-renders
+- [x] Filter by user → only that user's screenshots shown
+- [x] Click thumbnail → lightbox opens with full image, header info, Prev/Next, Delete
+- [x] Prev/Next navigates through full filtered screenshot set
+- [x] Delete → confirm dialog → interval removed → card disappears, count updates
+- [x] Delete button visible for admin and manager, not visible for employee/auditor
+- [x] Escape closes modal; ← / → navigate
+- [x] Navigate away and back → view re-renders cleanly (no stale state)
+- [x] Screenshot timestamps display in correct company timezone (not UTC)
 
 ---
 
 ### C-016 — Hide Projects nav item for employees
 
-**Status:** ⏳ Pending
+**Status:** ✅ Done — confirmed working 2026-05-08
 **Priority:** Medium
+
+#### What was done
+
+**Frontend — `app/public/dashboard-nav.js`**
+
+Extracted a shared `getUser()` helper from the existing `canViewTeam()` function, then added `isEmployee()` which checks `parseInt(user.role_id, 10) === 2`.
+
+Added a CSS rule in `injectCSS()`:
+```css
+body.dn-employee #dn-projects-link { display: none !important; }
+```
+
+Added a body class toggle at the end of `updateActiveState()`:
+```javascript
+if (isEmployee()) {
+    document.body.classList.add('dn-employee');
+} else {
+    document.body.classList.remove('dn-employee');
+}
+```
+
+The `#dn-projects-link` element is injected by `flattenProjectsDropdown()` (C-010). Targeting it by ID with a body-class guard means the rule applies as soon as both exist — no timing dependency.
+
+#### Test
+
+- [x] Log in as employee → Projects nav item not visible in sidebar ✅
+- [x] Log in as admin → Projects nav item visible (no regression) ✅
+- [x] Employee can still create tasks via quick-create bar ✅
 
 #### Requirement
 
