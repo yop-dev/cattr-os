@@ -46,3 +46,5 @@ COPY app/public/timecard-export.js /app/public/timecard-export.js
 
 # C-004: Allow admin to edit time interval start/end — add start_at/end_at to validated fields
 COPY app/app/Http/Requests/Interval/EditTimeIntervalRequest.php /app/app/Http/Requests/Interval/EditTimeIntervalRequest.php
+# C-004: Fix upstream bug — filter listener missing return $requestData, causing fill(null) crash
+COPY app/app/Http/Controllers/Api/IntervalController.php /app/app/Http/Controllers/Api/IntervalController.php
