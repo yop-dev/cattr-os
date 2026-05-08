@@ -43,3 +43,6 @@ COPY app/public/time-interval-helpers.js /app/public/time-interval-helpers.js
 
 # C-013: Timecard export — per-interval table + jsPDF direct download on Time Use Report page
 COPY app/public/timecard-export.js /app/public/timecard-export.js
+
+# C-004: Allow admin to edit time interval start/end — add start_at/end_at to validated fields
+COPY app/app/Http/Requests/Interval/EditTimeIntervalRequest.php /app/app/Http/Requests/Interval/EditTimeIntervalRequest.php
