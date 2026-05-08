@@ -597,35 +597,34 @@ Fix: set `_fetching = true`, `currentStart`, `currentEnd` ALL before the first D
 
 #### Requirement
 
-In the timecard export table (C-013), the Duration column currently rendered the total duration and the time slot on separate lines. Condensed into a single line so rows are compact and easier to scan.
+In the timecard export table (C-013), the Duration column rendered total duration and time slot in a hard-to-read format. Reworked to match Clockify's style: duration on top line (bold), time range on second line (gray, smaller) — both in HTML table and PDF export.
 
 #### What was done
 
 **Frontend — `app/public/timecard-export.js`**
 
-Three changes:
-
-**HTML cell** — replaced two-block layout with single inline string:
+**HTML cell** — two inline `<span style="display:block">` elements, duration on top, time range below. Inline styles used to guarantee `white-space: nowrap` regardless of cascade:
 ```javascript
-'<td class="dn-tc-col-dur">' +
-    esc(fmtDuration(secs)) + ' · ' + esc(sp.timeStr) + ' → ' + esc(ep.timeStr) +
+'<td class="dn-tc-col-dur" style="white-space:nowrap;min-width:185px;width:185px">' +
+    '<span style="display:block;font-weight:500;color:#1a1a2e">' + esc(fmtDuration(secs)) + '</span>' +
+    '<span style="display:block;color:#888;font-size:0.82rem;margin-top:3px;white-space:nowrap;word-break:keep-all;overflow-wrap:normal">' + esc(sp.timeStr) + ' - ' + esc(ep.timeStr) + '</span>' +
 '</td>'
 ```
 
-**PDF row** — changed `\n` separator to ` · ` and ` – ` to ` → ` to match HTML:
+**PDF row** — two lines via `\n`, time range uses ` - ` separator:
 ```javascript
-fmtDuration(secs) + ' · ' + sp.timeStr + ' → ' + ep.timeStr
+fmtDuration(secs) + '\n' + sp.timeStr + ' - ' + ep.timeStr
 ```
 
-**CSS** — removed dead `.dn-tc-durval` and `.dn-tc-timeslot` rules (no longer rendered), merged into single `.dn-tc-col-dur` rule:
+**PDF column width** — Duration column widened from 95pt to 145pt so the time range fits on one line:
 ```javascript
-'.dn-tc-col-dur { white-space: nowrap; font-weight: 500; color: #1a1a2e; }'
+columnStyles: { 0: { cellWidth: 75 }, 2: { cellWidth: 145 }, 3: { cellWidth: 120 } }
 ```
 
 #### Test
 
-- [x] Timecard export table → Duration column shows duration and time range on one line per row ✅
-- [x] PDF export → single-line duration renders correctly in the generated PDF ✅
+- [x] HTML table → Duration column: duration on top line, time range below on one line ✅
+- [x] PDF export → Duration column: duration on top line, time range below on one line ✅
 
 ---
 

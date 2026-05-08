@@ -312,7 +312,7 @@
             return [
                 sp.dateStr,
                 project ? taskName + '\n' + project : taskName,
-                fmtDuration(secs) + ' · ' + sp.timeStr + ' → ' + ep.timeStr,
+                fmtDuration(secs) + '\n' + sp.timeStr + ' - ' + ep.timeStr,
                 userName,
             ];
         });
@@ -323,7 +323,7 @@
             body: rows,
             styles: { fontSize: 8, cellPadding: 6 },
             headStyles: { fillColor: [240, 240, 240], textColor: [100, 100, 100], fontStyle: 'normal', fontSize: 7 },
-            columnStyles: { 0: { cellWidth: 75 }, 2: { cellWidth: 95 }, 3: { cellWidth: 120 } },
+            columnStyles: { 0: { cellWidth: 75 }, 2: { cellWidth: 145 }, 3: { cellWidth: 120 } },
         });
 
         var filename = 'Cattr_Time_Report_Detailed_' +
@@ -403,8 +403,9 @@
                     '<div class="dn-tc-task">' + esc(taskName) + '</div>' +
                     (project ? '<div class="dn-tc-project">' + esc(project) + '</div>' : '') +
                 '</td>' +
-                '<td class="dn-tc-col-dur">' +
-                    esc(fmtDuration(secs)) + ' · ' + esc(sp.timeStr) + ' → ' + esc(ep.timeStr) +
+                '<td class="dn-tc-col-dur" style="white-space:nowrap;min-width:185px;width:185px">' +
+                    '<span style="display:block;font-weight:500;color:#1a1a2e">' + esc(fmtDuration(secs)) + '</span>' +
+                    '<span style="display:block;color:#888;font-size:0.82rem;margin-top:3px;white-space:nowrap;word-break:keep-all;overflow-wrap:normal">' + esc(sp.timeStr) + ' - ' + esc(ep.timeStr) + '</span>' +
                 '</td>' +
                 '<td class="dn-tc-col-user">' + esc(userName) + '</td>';
 
@@ -490,7 +491,9 @@
             '.dn-tc-col-date { color: #555; white-space: nowrap; width: 110px; }',
             '.dn-tc-task { font-weight: 500; color: #1a1a2e; line-height: 1.4; }',
             '.dn-tc-project { color: #888; font-size: 0.82rem; margin-top: 3px; }',
-            '.dn-tc-col-dur { white-space: nowrap; font-weight: 500; color: #1a1a2e; }',
+            '.dn-tc-col-dur { min-width: 185px !important; width: 185px !important; }',
+            '.dn-tc-dur-val { font-weight: 500; color: #1a1a2e; white-space: nowrap !important; word-break: keep-all !important; overflow-wrap: normal !important; }',
+            '.dn-tc-dur-range { color: #888; font-size: 0.82rem; margin-top: 3px; white-space: nowrap !important; word-break: keep-all !important; overflow-wrap: normal !important; }',
             '.dn-tc-col-user { color: #555; white-space: nowrap; }',
             '.dn-tc-empty, .dn-tc-loading { color: #999; padding: 24px 0; }',
             '.dn-tc-warning { color: #b45309; background: #fef3c7; border: 1px solid #fcd34d; border-radius: 4px; padding: 10px 14px; font-size: 0.85rem; margin-bottom: 16px; }',
