@@ -22,6 +22,7 @@ All planned changes and known bugs for the Cattr deployment. Customisations are 
 | C-016 | Hide Projects nav item for employees — keep visible for Admin/Manager/Auditor only | ✅ Done | Medium |
 | C-017 | Screenshots page — improve organization to show clear 5-minute grouped sequences (Clockify-style) | ✅ Done | Medium |
 | C-018 | Timecard export — Duration column: single-line format "HH:MM:SS · 10:00 AM → 10:05 AM" | ✅ Done | Low |
+| C-019 | Dashboard screenshots section — card UI matching Screenshots page + clickable lightbox modal | ✅ Done | Medium |
 
 ---
 
@@ -675,6 +676,55 @@ New standalone IIFE `app/public/screenshots-grouped.js` injected via `app.blade.
 - [x] Escape closes modal; ← / → navigate
 - [x] Navigate away and back → view re-renders cleanly (no stale state)
 - [x] Screenshot timestamps display in correct company timezone (not UTC)
+
+---
+
+### C-019 — Dashboard screenshots: card UI + clickable lightbox modal
+
+**Status:** ✅ Done — confirmed working 2026-05-08
+**Priority:** Medium
+
+#### Requirement
+
+Replace the native dashboard screenshots section (checkbox-based list) with a Clockify-style card grid showing thumbnail, task name, project name (blue), and timestamp. Clicking a card should open a lightbox modal with the full screenshot and prev/next navigation.
+
+#### What was done
+
+**Frontend — `app/public/dashboard-nav.js`**
+
+Extended `patchDashboardScreenshots()` in the existing `dashboard-nav.js` IIFE. Activates only on dashboard routes (`/dashboard*`, `/timeline`). Uses the existing `MutationObserver` tick.
+
+**Card grid:**
+- Reads intervals from the `.screenshots` Vue component's `vm.intervals[vm.user.id]` — the dashboard's screenshot-bearing intervals for the current user and day
+- Hides the native `at-checkbox-group` (replaces it with the custom grid)
+- Renders each interval as a `.dn-sc-card` with a thumbnail image (`/api/time-intervals/{id}/thumb`), task name, project name (blue), and timestamp
+- Thumbnail fetched via `dnFetchImage()` with Bearer auth → blob URL (API requires Authorization header)
+- Cache-busted grid: `_scPatchedKey` change-detection guard prevents redundant rebuilds; stale grid is removed and rebuilt when the interval list changes
+
+**Lightbox modal (`#dn-sc-modal`):**
+- Built and appended to `document.body` on first card click (lazy init via `buildDashModal()`)
+- `openDashModal(idx)` renders the full screenshot (`/api/time-intervals/{id}/screenshot`) for the clicked interval, with task name and project/time in the header
+- Prev/Next buttons navigate through `_dashIntervals` array
+- Escape key closes; ← / → arrow keys navigate
+- Previous blob URL revoked before loading a new screenshot to avoid memory leaks
+
+**Bug fixed during implementation:**
+The initial implementation checked `iv.has_screenshot` before rendering the thumbnail. The dashboard's Vue component stores interval objects that don't carry the `has_screenshot` property (it's appended by the API model, not present on in-memory Vue state). This caused every card to render a "No screenshot" placeholder. Fix: removed the guard — the dashboard section only surfaces intervals with screenshots, so the check is unnecessary. `dnFetchImage()` already hides the image gracefully on a 404.
+
+#### Files Modified
+
+| File | Change |
+|---|---|
+| `app/public/dashboard-nav.js` | Added card grid, modal, click handlers, Escape/arrow key listener |
+
+#### Test
+
+- [x] Dashboard → screenshot cards render with thumbnail, task name, project (blue), timestamp ✅
+- [x] Click a card → lightbox opens with full screenshot ✅
+- [x] Prev/Next buttons navigate between screenshots ✅
+- [x] Escape closes modal ✅
+- [x] ← / → arrow keys navigate ✅
+- [x] Navigate away and back → grid re-renders cleanly ✅
 
 ---
 
