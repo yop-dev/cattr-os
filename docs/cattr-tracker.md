@@ -11,7 +11,7 @@ All planned changes and known bugs for the Cattr deployment. Customisations are 
 | C-001 | Block employees from deleting screenshots / editing time entries via API (Admin/Manager/Auditor can delete) | ✅ Done | High |
 | C-002 | Allow employees to create projects/tasks | ✅ Done | High |
 | C-003 | Admin correct time on behalf of employees | ✅ Partial | — |
-| C-004 | Admin edit existing time entry (adjust end time) | ⏳ Pending | Medium |
+| C-004 | Admin edit existing time entry (adjust start/end time) | ✅ Done | Medium |
 | C-009 | Quick-create task/project bar on dashboard | ✅ Done | Medium |
 | C-010 | Dashboard nav restructure — Team to header, Projects direct link, Tasks/Projects cleanup | ✅ Done | Medium |
 | C-011 | All users can see all projects (prevent duplicate project creation) | ✅ Done | Medium |
@@ -19,6 +19,9 @@ All planned changes and known bugs for the Cattr deployment. Customisations are 
 | C-013 | Timecard export — per-interval PDF export on Time Use Report page (Clockify-style table) | ✅ Done | Medium |
 | C-014 | Hide Calendar nav item (Planned Time — not used by team) | ✅ Done | Low |
 | C-015 | Screenshots + Team page dropdown UX — hide Active/Inactive tabs, role filter; add Apply buttons | ✅ Done | Low |
+| C-016 | Hide Projects nav item for employees — keep visible for Admin/Manager/Auditor only | ⏳ Pending | Medium |
+| C-017 | Screenshots page — improve organization to show clear 5-minute grouped sequences (Clockify-style) | ⏳ Pending | Medium |
+| C-018 | Timecard export — Duration column: single-line format "HH:MM:SS · 10:00 AM → 10:05 AM" | ⏳ Pending | Low |
 
 ---
 
@@ -188,37 +191,127 @@ There is no delete button in the time entries list view. The backend allows it (
 
 ### C-004 — Admin: edit existing time entry (adjust start/end time)
 
-**Status:** ⏳ Pending — not available in current UI, needs investigation
+**Status:** ✅ Done — confirmed working 2026-05-08
 **Priority:** Medium
 
 #### Requirement
 
-When an employee forgets to stop their timer and the session ran too long, admin needs to correct the end time of the existing entry rather than deleting and re-adding (which loses the screenshot association).
+When an employee forgets to stop their timer and the session ran too long, admin needs to correct the start/end time of the existing entry rather than deleting and re-adding (which loses the screenshot association).
 
-#### Current state
+#### What was done
 
-The UI has no edit form for existing time intervals in the admin view. The only admin options are:
-1. Delete the entry via the screenshot modal (loses the screenshot)
-2. Add a new manual entry with the correct times (no screenshot, but correct duration)
+**Backend — `app/app/Http/Requests/Interval/EditTimeIntervalRequest.php`**
 
-#### What needs to change
+Added `start_at` and `end_at` to `_rules()` so they survive `$request->validated()`:
 
-Needs investigation — options:
-- **Option A:** Add an edit form to the time entries list for admin users (frontend change)
-- **Option B:** Surface the edit endpoint that already exists in the backend (`EditTimeIntervalRequest` + `update` policy) via a UI element
+```php
+public function _rules(): array
+{
+    return [
+        'id'       => 'required|int|exists:time_intervals,id',
+        'start_at' => 'required|string',
+        'end_at'   => 'required|string',
+    ];
+}
+```
 
-The backend already supports editing — `EditTimeIntervalRequest` calls `$user->can('update', ...)` and admin bypasses via `before()`. The gap is purely frontend.
+**Backend — `app/app/Http/Controllers/Api/IntervalController.php`**
 
-#### Open questions before implementing
+Replaced the upstream `edit()` method body with a direct Eloquent save, bypassing the filter/event system entirely:
 
-- Should edited entries keep their original screenshot, or show a "manually adjusted" flag?
-- Should the edit only allow changing end time, or full start/end/project/task editing?
+```php
+public function edit(EditTimeIntervalRequest $request): JsonResponse
+{
+    $data     = $request->validated();
+    $interval = TimeInterval::findOrFail($data['id']);
+    $interval->start_at = Carbon::parse($data['start_at'])->utc()->toDateTimeString();
+    $interval->end_at   = Carbon::parse($data['end_at'])->utc()->toDateTimeString();
+    $interval->save();
+    return responder()->success($interval)->respond();
+}
+```
+
+The upstream `_edit()` dispatches `CatEvent::dispatch(Filter::getAfterActionEventName())` after save, which triggered a GitLab integration job that failed with a missing constructor parameter (HTTP 500). Bypassing the event system entirely was the fix.
+
+**Frontend — `app/public/timecard-export.js`**
+
+Added an edit button (✎) to each row in the timecard table for admin users. Clicking it opens a modal with datetime-local inputs pre-filled with the current start/end in company timezone. On save, converts the local input back to UTC via `localInputToUtcIso()` and calls `POST /api/time-intervals/edit`. On success, dismisses the modal and re-renders the table.
+
+Also added `normTs()` helper to fix a timezone display bug (see Key technical findings below).
+
+**`app/resources/views/app.blade.php`**
+
+Added PHP-injected company timezone to ensure it's available before any JS runs:
+
+```php
+@php
+    $__tz = \Illuminate\Support\Facades\DB::table('settings')
+        ->where('module_name', 'core')->where('key', 'timezone')->value('value') ?? 'UTC';
+@endphp
+<script>window.__cattrTz = '{{ addslashes($__tz) }}';</script>
+```
+
+Also added `?v={{ filemtime(public_path('...')) }}` cache-busting query strings to all custom script tags.
+
+#### Key technical findings
+
+**GitLab integration 500 error**
+
+The upstream `_edit()` method fires `CatEvent::dispatch(Filter::getAfterActionEventName())` post-save, which invokes a `ReassignTaskToEditedInterval` listener that attempts to create a GitLab job with a missing constructor parameter. This fails with HTTP 500. Fix: bypass `_edit()` entirely and do a direct Eloquent save.
+
+**Timezone display: API returns space-separated timestamps without `Z`**
+
+Cattr's API returns timestamps as `"2026-05-10 18:42:00"` (space-separated, no timezone marker). `new Date("2026-05-10 18:42:00")` in Chrome/V8 parses this as **local browser time**, not UTC — shifting displayed times by the browser's UTC offset. `18:42 UTC` was showing as `06:42 PM PDT` instead of `11:42 AM PDT`.
+
+Fix: `normTs()` helper normalizes all API timestamps before parsing:
+
+```javascript
+function normTs(s) {
+    s = String(s || '').replace(' ', 'T');
+    if (!/Z|[+-]\d{2}:\d{2}$/.test(s)) s += 'Z';
+    return s;
+}
+```
+
+Applied to `toLocalParts`, `utcToLocalInput` (modal pre-fill), and `durationSecs`.
+
+**Race condition: company timezone not available at render time**
+
+`getCompanyTimezone()` originally read from `vm.$store.getters['user/companyData'].timezone`. On initial page render the Vue store isn't populated yet, so it fell back to `'UTC'` and displayed wrong times. Fixed by PHP-injecting `window.__cattrTz` at page load — available synchronously before any JS runs, no store dependency.
+
+**`localInputToUtcIso()` round-trip conversion**
+
+The `datetime-local` input yields a string like `"2026-05-10T18:42"`. To convert to UTC:
+
+```javascript
+function localInputToUtcIso(localStr, tz) {
+    var asUtcMs = new Date(localStr + ':00.000Z').getTime();  // treat input as UTC
+    var roundtrip = utcToLocalInput(new Date(asUtcMs).toISOString(), tz);  // convert UTC→local
+    var roundtripMs = new Date(roundtrip + ':00.000Z').getTime();
+    return new Date(2 * asUtcMs - roundtripMs).toISOString();  // apply offset
+}
+```
+
+This works correctly for PDT (UTC-7) including DST boundaries.
+
+#### Files Modified
+
+| File | Change |
+|---|---|
+| `app/app/Http/Requests/Interval/EditTimeIntervalRequest.php` | Added `start_at` and `end_at` to `_rules()` |
+| `app/app/Http/Controllers/Api/IntervalController.php` | Replaced `edit()` with direct Eloquent save, bypassing event system |
+| `app/public/timecard-export.js` | Edit button + modal, `normTs()` fix, `window.__cattrTz` integration |
+| `app/resources/views/app.blade.php` | PHP-injected `window.__cattrTz`; cache-busting `?v=` on all custom scripts |
+| `Dockerfile` | Added COPY lines for `EditTimeIntervalRequest.php` and `IntervalController.php` |
 
 #### Test
 
-- [ ] Admin opens a time entry → edit form appears → change end time → save
-- [ ] Confirm updated duration appears correctly in reports
-- [ ] Confirm original screenshot is still associated after edit
+- [x] Admin opens timecard → ✎ button visible on each row ✅
+- [x] Click ✎ → modal opens with correct start/end times in company timezone (PDT) ✅
+- [x] Change end time → Save → table re-renders with updated time ✅
+- [x] Saved times display correctly in PDT (not UTC) ✅
+- [x] Input time matches displayed time after save (round-trip correct) ✅
+- [x] Non-admin → ✎ button not visible ✅
 
 ---
 
@@ -494,6 +587,107 @@ Fix: set `_fetching = true`, `currentStart`, `currentEnd` ALL before the first D
 - [x] Navigate away and back → table re-renders cleanly ✅
 - [ ] Verify timestamps display in correct company timezone
 - [ ] Test with 2000+ intervals (perPage limit)
+
+---
+
+### C-018 — Timecard export: single-line duration format
+
+**Status:** ⏳ Pending
+**Priority:** Low
+
+#### Requirement
+
+In the timecard export table (C-013), the Duration column currently renders the total duration and the time slot on separate lines. It should be condensed into a single line so rows are compact and easier to scan.
+
+#### Target format
+
+```
+1h 05m · 10:00 AM → 11:05 AM
+```
+
+or equivalent — duration + from/to time on one line, separated by a divider.
+
+#### What needs to change
+
+**Frontend — `app/public/timecard-export.js`**
+
+Update the Duration cell rendering in the table builder. Currently the cell likely uses a `<br>` or block-level element to separate the two values. Replace with inline formatting — e.g. `${duration} · ${startTime} → ${endTime}` in a single text node or `<span>`.
+
+#### Test
+
+- [ ] Timecard export table → Duration column shows duration and time range on one line per row
+- [ ] PDF export → single-line duration renders correctly in the generated PDF
+
+---
+
+### C-017 — Screenshots page: improve organization to Clockify-style grouped sequences
+
+**Status:** ⏳ Pending
+**Priority:** Medium
+
+#### Requirement
+
+Screenshots are captured every 5 minutes (matching Clockify's cadence) but the current Screenshots page presents them in a way that feels scattered and hard to review. Clockify groups screenshots into clear, structured 5-minute blocks that are easy to scan chronologically.
+
+Goal: make the Screenshots page feel organized and reviewable — screenshots should be grouped in a clean sequence so a manager can quickly scan a user's session the same way they would in Clockify.
+
+#### Current behavior
+
+- Screenshots exist and are captured correctly at ~5-minute intervals
+- The page layout does not group or visually sequence them in a predictable timeline structure
+- Browsing a user's screenshots feels disorganized compared to Clockify's structured view
+
+#### What needs to change
+
+Needs investigation to determine what's driving the disorganized appearance:
+- Are screenshots missing consistent time-slot labels (e.g. "10:00–10:05")?
+- Are they sorted inconsistently or missing a clear chronological grouping by session/day?
+- Is it a layout issue (grid vs. timeline) or a data grouping issue?
+
+Once investigated, likely approach is a frontend overlay (same pattern as `timecard-export.js`) that restructures the screenshot view into labeled time-block groups.
+
+#### Reference
+
+Clockify's screenshot review shows each interval as a labeled block with timestamp, making it easy to verify a full work session at a glance. That structure is the target UX.
+
+#### Test
+
+- [ ] Screenshots page → entries appear grouped in clear 5-minute labeled blocks
+- [ ] Blocks are in chronological order within each session/day
+- [ ] Manager can scan a full user session without losing track of sequence
+
+---
+
+### C-016 — Hide Projects nav item for employees
+
+**Status:** ⏳ Pending
+**Priority:** Medium
+
+#### Requirement
+
+Remove the Projects nav item from the sidebar for team members (employees, role_id=2). Admin, Manager, and Auditor keep full access.
+
+Goal: simplify the employee workflow to the minimum needed steps:
+1. Select or add a task (via quick-create bar)
+2. Start the timer
+3. Stop the timer when finished
+
+Employees don't need to browse or manage projects — tasks are created for them or via the quick-create bar. Hiding Projects reduces noise and prevents employees from navigating into a view they don't need.
+
+#### What needs to change
+
+**Frontend — `app/public/dashboard-nav.js`** (or a new `hide-employee-controls.js` extension)
+
+Use the same MutationObserver + role-check pattern already in place. For employees (`role_id === 2`), hide the Projects nav item in the sidebar. Admin/Manager/Auditor (role_id 0, 1, 3) are unaffected.
+
+The Projects link was restructured in C-010 into a direct `<li id="dn-projects-link">` element — it should be straightforward to target by that ID and set `display: none` for employees.
+
+#### Test
+
+- [ ] Log in as employee → Projects nav item not visible in sidebar
+- [ ] Log in as admin → Projects nav item visible (no regression)
+- [ ] Log in as manager → Projects nav item visible (no regression)
+- [ ] Employee can still create tasks via quick-create bar and start timer from desktop app
 
 ---
 

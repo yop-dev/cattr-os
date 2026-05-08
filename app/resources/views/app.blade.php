@@ -22,11 +22,16 @@
     <strong>We're sorry but Cattr doesn't work properly without JavaScript enabled. Please enable it to continue.</strong>
 </noscript>
 <div id="app"></div>
+@php
+    $__tz = \Illuminate\Support\Facades\DB::table('settings')
+        ->where('module_name', 'core')->where('key', 'timezone')->value('value') ?? 'UTC';
+@endphp
+<script>window.__cattrTz = '{{ addslashes($__tz) }}';</script>
 <x:sri.script mix src="/dist/app.js"></x:sri-script>
-<script src="/hide-employee-controls.js"></script>
-<script src="/quick-create.js"></script>
-<script src="/dashboard-nav.js"></script>
-<script src="/time-interval-helpers.js"></script>
-<script src="/timecard-export.js"></script>
+<script src="/hide-employee-controls.js?v={{ filemtime(public_path('hide-employee-controls.js')) }}"></script>
+<script src="/quick-create.js?v={{ filemtime(public_path('quick-create.js')) }}"></script>
+<script src="/dashboard-nav.js?v={{ filemtime(public_path('dashboard-nav.js')) }}"></script>
+<script src="/time-interval-helpers.js?v={{ filemtime(public_path('time-interval-helpers.js')) }}"></script>
+<script src="/timecard-export.js?v={{ filemtime(public_path('timecard-export.js')) }}"></script>
 </body>
 </html>

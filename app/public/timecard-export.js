@@ -11,6 +11,7 @@
     var _jspdfLoaded  = false;
     var _jspdfLoading = false;
     var _jspdfQueue   = [];
+    var _tzCache     = null;  // cached once Vue store has companyData
 
     // ── helpers ────────────────────────────────────────────────────────────
 
@@ -23,10 +24,23 @@
     }
 
     function getCompanyTimezone() {
+        if (_tzCache) return _tzCache;
+        // PHP-injected at page render — available before any JS runs, no race condition.
+        try {
+            var serverTz = window.__cattrTz;
+            if (serverTz && serverTz !== 'UTC') { _tzCache = serverTz; return serverTz; }
+        } catch (e) {}
+        // Fallback: Vue store (may not be loaded yet on initial render)
         try {
             var vm = document.getElementById('app').__vue__;
-            return vm.$store.getters['user/companyData'].timezone || 'UTC';
-        } catch (e) { return 'UTC'; }
+            var tz = vm.$store.getters['user/companyData'].timezone;
+            if (tz) { _tzCache = tz; return tz; }
+        } catch (e) {}
+        return serverTz || 'UTC';
+    }
+
+    function waitForCompanyTimezone() {
+        return Promise.resolve(getCompanyTimezone());
     }
 
     function isAdmin() {
@@ -84,6 +98,13 @@
         });
     }
 
+    // API returns "YYYY-MM-DD HH:MM:SS" (no timezone) — always treat as UTC.
+    function normTs(s) {
+        s = String(s || '').replace(' ', 'T');
+        if (!/Z|[+-]\d{2}:\d{2}$/.test(s)) s += 'Z';
+        return s;
+    }
+
     function esc(str) {
         return String(str || '')
             .replace(/&/g, '&amp;').replace(/</g, '&lt;')
@@ -92,7 +113,7 @@
 
     function toLocalParts(isoUtc, tz) {
         try {
-            var d = new Date(isoUtc);
+            var d = new Date(normTs(isoUtc));
             var dateParts = new Intl.DateTimeFormat('en-US', {
                 timeZone: tz,
                 month: '2-digit', day: '2-digit', year: 'numeric',
@@ -110,7 +131,7 @@
                 timeStr: tm.hour + ':' + tm.minute + ':' + tm.second + ampm,
             };
         } catch (e) {
-            var d2 = new Date(isoUtc);
+            var d2 = new Date(normTs(isoUtc));
             var pad = function (n) { return String(n).padStart(2, '0'); };
             var h = d2.getHours(), ampm2 = h >= 12 ? 'PM' : 'AM', h12 = h % 12 || 12;
             return {
@@ -121,7 +142,7 @@
     }
 
     function durationSecs(start_at, end_at) {
-        return Math.max(0, Math.round((new Date(end_at) - new Date(start_at)) / 1000));
+        return Math.max(0, Math.round((new Date(normTs(end_at)) - new Date(normTs(start_at))) / 1000));
     }
 
     function fmtDuration(secs) {
@@ -141,7 +162,7 @@
                 timeZone: tz,
                 year: 'numeric', month: '2-digit', day: '2-digit',
                 hour: '2-digit', minute: '2-digit', hour12: false,
-            }).formatToParts(new Date(isoUtc)).forEach(function (p) { parts[p.type] = p.value; });
+            }).formatToParts(new Date(normTs(isoUtc))).forEach(function (p) { parts[p.type] = p.value; });
             var h = parts.hour === '24' ? '00' : parts.hour; // Intl quirk: midnight = "24"
             return parts.year + '-' + parts.month + '-' + parts.day + 'T' + h + ':' + parts.minute;
         } catch (e) {
@@ -282,9 +303,9 @@
         });
     }
 
-    function loadAndExportPDF(intervals, dates, btn) {
+    function loadAndExportPDF(intervals, dates, tz, btn) {
         if (_jspdfLoading) return; // prevent double-download while CDN is loading
-        if (_jspdfLoaded) { doExportPDF(intervals, dates); return; }
+        if (_jspdfLoaded) { doExportPDF(intervals, dates, tz); return; }
         _jspdfLoading = true;
         if (btn) { btn.disabled = true; btn.textContent = 'Loading…'; }
         loadScript('https://cdn.jsdelivr.net/npm/jspdf@2.5.1/dist/jspdf.umd.min.js')
@@ -295,7 +316,7 @@
                 _jspdfLoaded  = true;
                 _jspdfLoading = false;
                 if (btn) { btn.disabled = false; btn.textContent = 'Export PDF'; }
-                doExportPDF(intervals, dates);
+                doExportPDF(intervals, dates, tz);
                 _jspdfQueue.forEach(function (fn) { fn(); });
                 _jspdfQueue = [];
             })
@@ -306,11 +327,9 @@
             });
     }
 
-    function doExportPDF(intervals, dates) {
+    function doExportPDF(intervals, dates, tz) {
         var jsPDF = window.jspdf && window.jspdf.jsPDF;
         if (!jsPDF) { window.print(); return; }
-
-        var tz    = getCompanyTimezone();
         var total = intervals.reduce(function (s, iv) {
             return s + durationSecs(iv.start_at, iv.end_at);
         }, 0);
@@ -362,8 +381,7 @@
 
     // ── render ─────────────────────────────────────────────────────────────
 
-    function buildContent(intervals, dates, truncated) {
-        var tz    = getCompanyTimezone();
+    function buildContent(intervals, dates, truncated, tz) {
         var total = intervals.reduce(function (s, iv) {
             return s + durationSecs(iv.start_at, iv.end_at);
         }, 0);
@@ -377,7 +395,7 @@
         var btn = document.createElement('button');
         btn.className = 'at-btn at-btn--primary at-btn--small';
         btn.textContent = 'Export PDF';
-        btn.addEventListener('click', function () { loadAndExportPDF(intervals, dates, btn); });
+        btn.addEventListener('click', function () { loadAndExportPDF(intervals, dates, tz, btn); });
         bar.appendChild(btn);
         wrap.appendChild(bar);
 
@@ -485,11 +503,16 @@
         container.innerHTML = '<p class="dn-tc-loading">Loading…</p>';
 
         try {
-            var result = await fetchIntervals(dates.start, dates.end, userIds);
+            var result = await Promise.all([
+                fetchIntervals(dates.start, dates.end, userIds),
+                waitForCompanyTimezone(),
+            ]);
+            var intervals = result[0];
+            var tz        = result[1];
             container = document.getElementById(CONTAINER_ID);
             if (!container) return; // navigated away during fetch
             container.innerHTML = '';
-            container.appendChild(buildContent(result.rows, dates, result.truncated));
+            container.appendChild(buildContent(intervals.rows, dates, intervals.truncated, tz));
         } finally {
             _fetching = false;
         }

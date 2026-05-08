@@ -145,13 +145,12 @@ class IntervalController extends ItemController
      */
     public function edit(EditTimeIntervalRequest $request): JsonResponse
     {
-        Filter::listen(Filter::getRequestFilterName(), static function ($requestData) {
-            $requestData['start_at'] = Carbon::parse($requestData['start_at'])->setTimezone('UTC')->toDateTimeString();
-            $requestData['end_at'] = Carbon::parse($requestData['end_at'])->setTimezone('UTC')->toDateTimeString();
-            return $requestData;
-        });
-
-        return $this->_edit($request);
+        $data     = $request->validated();
+        $interval = TimeInterval::findOrFail($data['id']);
+        $interval->start_at = Carbon::parse($data['start_at'])->utc()->toDateTimeString();
+        $interval->end_at   = Carbon::parse($data['end_at'])->utc()->toDateTimeString();
+        $interval->save();
+        return responder()->success($interval)->respond();
     }
 
 
