@@ -486,9 +486,13 @@
                       (el.children[1] || null);
         if (cbGroup) cbGroup.style.display = 'none';
 
-        // Remove stale grid
+        // Remove stale grid, revoking thumbnail blob URLs to prevent memory leaks
         var old = document.getElementById('dn-sc-grid');
-        if (old) old.parentNode.removeChild(old);
+        if (old) {
+            var oldImgs = old.querySelectorAll('img[data-blob-url]');
+            for (var ri = 0; ri < oldImgs.length; ri++) URL.revokeObjectURL(oldImgs[ri].dataset.blobUrl);
+            old.parentNode.removeChild(old);
+        }
 
         if (!intervals.length) return;
 
