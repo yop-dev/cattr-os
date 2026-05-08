@@ -45,6 +45,15 @@
             '#dn-reports-link > .at-menu__item-link.dn-active { color: #2e2ef9 !important; }',
             '#dn-reports-link > .at-menu__item-link::after { content: ""; position: absolute; bottom: -0.75em; left: 0; width: 100%; height: 3px; background: currentColor; display: none; }',
             '#dn-reports-link > .at-menu__item-link.dn-active::after { display: block; }',
+            // Dashboard screenshots custom grid
+            '#dn-sc-grid { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }',
+            '.dn-sc-card { background: #fff; border: 1px solid #e0e0e8; border-radius: 6px; overflow: hidden; width: 150px; flex-shrink: 0; cursor: pointer; transition: box-shadow .15s; }',
+            '.dn-sc-card:hover { box-shadow: 0 2px 8px rgba(0,0,0,.12); }',
+            '.dn-sc-img { height: 80px; width: 100%; object-fit: cover; display: block; }',
+            '.dn-sc-info { padding: 5px 7px; }',
+            '.dn-sc-task { font-size: 11px; font-weight: 500; color: #333; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }',
+            '.dn-sc-project { font-size: 10px; color: #2e2ef9; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; margin-top: 1px; }',
+            '.dn-sc-time { font-size: 10px; color: #888; margin-top: 1px; }',
         ].join('\n');
         document.head.appendChild(style);
     }
@@ -410,6 +419,103 @@
         }
     }
 
+    // ── Dashboard screenshots replacement ──────────────────────────────────
+
+    var _scPatchedKey = null;
+
+    function dnNormTs(s) {
+        s = String(s || '').replace(' ', 'T');
+        if (!/Z|[+-]\d{2}:\d{2}$/.test(s)) s += 'Z';
+        return s;
+    }
+
+    function dnEscHtml(str) {
+        return String(str || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+    }
+
+    function dnFetchImage(img, path) {
+        var token = localStorage.getItem('access_token');
+        if (!token) return;
+        fetch(path, { headers: { 'Authorization': 'Bearer ' + token } })
+            .then(function (r) { if (!r.ok) throw new Error('HTTP ' + r.status); return r.blob(); })
+            .then(function (blob) {
+                if (img.dataset.blobUrl) URL.revokeObjectURL(img.dataset.blobUrl);
+                var url = URL.createObjectURL(blob);
+                img.dataset.blobUrl = url;
+                img.src = url;
+            })
+            .catch(function () { img.style.display = 'none'; });
+    }
+
+    function isOnDashboardPage() {
+        return /^\/dashboard/.test(window.location.pathname) || window.location.pathname === '/timeline';
+    }
+
+    function patchDashboardScreenshots() {
+        if (!isOnDashboardPage()) { _scPatchedKey = null; return; }
+
+        var el = document.querySelector('.screenshots');
+        if (!el) { _scPatchedKey = null; return; }
+
+        var vm = el.__vue__;
+        if (!vm || !vm.intervals || !vm.user) return;
+
+        var intervals = vm.intervals[vm.user.id] || [];
+        var key = JSON.stringify(intervals.map(function (iv) { return iv.id; }));
+        if (key === _scPatchedKey) return;
+        _scPatchedKey = key;
+
+        // Hide native checkbox-group, keep the title
+        var cbGroup = el.querySelector('[class*="checkbox-group"]') ||
+                      el.querySelector('.at-checkbox-group') ||
+                      (el.children[1] || null);
+        if (cbGroup) cbGroup.style.display = 'none';
+
+        // Remove stale grid
+        var old = document.getElementById('dn-sc-grid');
+        if (old) old.parentNode.removeChild(old);
+
+        if (!intervals.length) return;
+
+        var tz = window.__cattrTz || 'UTC';
+        var grid = document.createElement('div');
+        grid.id = 'dn-sc-grid';
+
+        intervals.forEach(function (iv) {
+            if (!iv || !iv.id) return;
+            var taskName    = (iv.task && iv.task.task_name) || (iv.task_name) || '—';
+            var projectName = iv.project_name || (iv.task && iv.task.project && iv.task.project.name) || '';
+            var timeStr = '';
+            if (iv.start_at) {
+                try {
+                    timeStr = new Intl.DateTimeFormat('en-US', {
+                        timeZone: tz, hour: '2-digit', minute: '2-digit', hour12: true,
+                    }).format(new Date(dnNormTs(iv.start_at)));
+                } catch (e) {}
+            }
+
+            var card = document.createElement('div');
+            card.className = 'dn-sc-card';
+
+            var img = document.createElement('img');
+            img.className = 'dn-sc-img';
+            img.alt = '';
+            card.appendChild(img);
+            dnFetchImage(img, '/api/time-intervals/' + iv.id + '/thumb');
+
+            var info = document.createElement('div');
+            info.className = 'dn-sc-info';
+            info.innerHTML =
+                '<div class="dn-sc-task">' + dnEscHtml(taskName) + '</div>' +
+                (projectName ? '<div class="dn-sc-project">' + dnEscHtml(projectName) + '</div>' : '') +
+                (timeStr ? '<div class="dn-sc-time">' + timeStr + '</div>' : '');
+            card.appendChild(info);
+            grid.appendChild(card);
+        });
+
+        el.appendChild(grid);
+    }
+
     function tick() {
         lockToTimeline();
         injectTeamLink();
@@ -421,6 +527,7 @@
         injectTasksHint();
         limitTaskAvatars();
         cleanupDropdowns();
+        patchDashboardScreenshots();
     }
 
     function init() {
