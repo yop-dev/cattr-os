@@ -3,9 +3,6 @@ FROM registry.git.amazingcat.net/cattr/core/app:latest
 # BUG-001 fix: strip stale Authorization header on login endpoint
 COPY app/etc/nginx/conf.d/app.conf /etc/nginx/conf.d/app.conf
 
-# BUG-001 fix: skip UserAccessScope on auth routes (Octane state bleed)
-COPY app/app/Scopes/UserAccessScope.php /app/app/Scopes/UserAccessScope.php
-
 # C-001: Employees cannot edit or delete their own time intervals (backend)
 COPY app/app/Policies/TimeIntervalPolicy.php /app/app/Policies/TimeIntervalPolicy.php
 
@@ -56,4 +53,6 @@ COPY app/app/Http/Controllers/Api/IntervalController.php /app/app/Http/Controlle
 
 # C-020: Tracking session API for web↔desktop bidirectional timer sync
 COPY app/routes/api.php /app/routes/api.php
-COPY app/app/Http/Controllers/TrackingSessionController.php /app/app/Http/Controllers/TrackingSessionController.php
+
+HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
+    CMD curl -sf http://localhost/ || exit 1
