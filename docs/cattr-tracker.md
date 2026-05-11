@@ -23,6 +23,7 @@ All planned changes and known bugs for the Cattr deployment. Customisations are 
 | C-017 | Screenshots page — improve organization to show clear 5-minute grouped sequences (Clockify-style) | ✅ Done | Medium |
 | C-018 | Timecard export — Duration column: single-line format "HH:MM:SS · 10:00 AM → 10:05 AM" | ✅ Done | Low |
 | C-019 | Dashboard screenshots section — card UI matching Screenshots page + clickable lightbox modal | ✅ Done | Medium |
+| C-020 | Clockify-style timer bar with web↔desktop bidirectional sync (1-second polling) | ✅ Done | High |
 
 ---
 
@@ -786,6 +787,106 @@ The Projects link was restructured in C-010 into a direct `<li id="dn-projects-l
 - [ ] Log in as admin → Projects nav item visible (no regression)
 - [ ] Log in as manager → Projects nav item visible (no regression)
 - [ ] Employee can still create tasks via quick-create bar and start timer from desktop app
+
+---
+
+### C-020 — Clockify-style timer bar with web↔desktop bidirectional sync
+
+**Status:** ✅ Done — 2026-05-11
+**Priority:** High
+
+#### Requirement
+
+Replace the C-009 quick-create bar (task/project creation only) with a full Clockify-style timer bar: task search with suggestions, Start/Stop button, live elapsed timer. Both the web bar and the desktop app reflect each other's state within 1 second via server polling — no WebSockets, no push.
+
+#### Architecture
+
+The server stores the active tracking session per user in Laravel's cache (key: `tracking_session_{userId}`, TTL: 24h). Both the web bar and the desktop app poll `POST /api/tracking/current` every 1 second. The server is the single source of truth. Timer display on both sides is calculated locally as `Date.now() - session.start_at`, so both show identical elapsed time within milliseconds.
+
+**Interval logging rule (no double-counting):**
+- `owner = 'web'` → web logs the interval to `POST /api/time-intervals/create` on Stop; desktop skips logging
+- `owner = 'desktop'` → desktop logs interval normally via its capture cycle; web skips logging on Stop
+
+#### What was done
+
+**Server — `app/routes/api.php`**
+
+Three new routes added inside the `auth:sanctum` middleware group using inline closures (avoids Composer classmap regeneration issue with new controller classes in the upstream Docker image):
+
+- `POST /api/tracking/current` — returns `{ data: session | null }`
+- `POST /api/tracking/start` — validates `task_id`, `start_at`, `owner`; writes session to cache; returns session
+- `POST /api/tracking/stop` — removes session from cache; returns `{ data: null }`
+
+**Server — `app/app/Http/Controllers/TrackingSessionController.php`** (new file, not active)
+
+Created as a reference implementation but not used in routing — included in the image for documentation. Routing uses closures instead due to the Composer classmap issue described above.
+
+**Server — `app/public/quick-create.js`** (full rewrite of C-009 bar)
+
+Complete replacement of the C-009 quick-create bar (~440 lines → ~780 lines). Same injection point (`.content-wrapper`), same SPA route detection via `MutationObserver`. New behavior:
+
+- **Idle state:** Task name input with autocomplete suggestions (up to 8 matching tasks from `POST /api/tasks/list`), project selector (read-only for existing tasks, editable for new task creation), **Start** button (blue when ready, disabled when not)
+- **Running state:** Task name shown read-only, project shown, live elapsed timer (`HH:MM:SS`), **Stop** button (red)
+- **Task suggestions:** Filters as user types; "Create new task" option appears for unknown names (triggers project selector); project auto-fills for existing tasks
+- **Task/project creation:** Inline — same flow as C-009, preserved in full
+- **Polling:** `setInterval(poll, 1000)` — detects external start/stop (desktop ↔ web); transitions UI state accordingly
+- **On Start:** `POST /api/tracking/start` with `owner: 'web'`
+- **On Stop (owner=web):** logs interval via `POST /api/time-intervals/create`, then `POST /api/tracking/stop`
+- **On Stop (owner=desktop):** `POST /api/tracking/stop` only (desktop already logged the interval)
+- **SPA cleanup:** polling and timer cleared on navigation away; re-initialized on return to dashboard
+
+**Bug fixes applied to web bar (2026-05-11):**
+- Suggestions closed immediately on input click because the document `click` listener fired after `focus` opened them → fixed with `e.stopPropagation()` on task input click
+- "No tasks yet" on first click (tasks not loaded yet) stayed stale after fetch completed → fixed by re-rendering dropdown inside `fetchTasks()` when input is already focused
+
+**Desktop — `app/src/base/web-sync.js`** (new file)
+
+Standalone module that hooks into `TaskTracker` events and polls the server. Initialized in `app/src/routes/index.js` on `'authenticated'` event, stopped on `'logged-out'`.
+
+- **Polling (1s):** if server session exists and desktop is idle → `TaskTracker.start(localTask.id)` (looks up local task by `externalId`); if server session gone and desktop is running → `TaskTracker.stop(pushInterval)` where `pushInterval = !_externalWebSession`; if task switches externally → `TaskTracker.start(newLocalTask.id)`
+- **Desktop → Server:** `TaskTracker.on('started')` and `TaskTracker.on('switched')` → `POST /api/tracking/start` with `owner: 'desktop'`; `TaskTracker.on('stopped')` → `POST /api/tracking/stop`
+- **Echo suppression:** `_startedExternally` and `_stoppedExternally` flags prevent the module from calling the server when it initiated the state change itself
+
+#### Key technical finding — Composer classmap in upstream Docker image
+
+New PHP controller classes cannot be added to the running container simply via `Dockerfile COPY` — the upstream image builds with `composer install --optimize-autoloader`, which bakes all class paths into `/app/vendor/composer/autoload_classmap.php` and `autoload_static.php`. A class added after the fact isn't in these maps, and Octane won't find it even though PSR-4 would theoretically resolve it (the optimized classmap takes precedence). Fix: use inline route closures in `api.php` instead of a separate controller class.
+
+#### Files Modified
+
+| File | Repo | Change |
+|---|---|---|
+| `app/routes/api.php` | cattr-server | New file (extracted from container + 3 tracking routes) |
+| `app/app/Http/Controllers/TrackingSessionController.php` | cattr-server | New file (reference only — closures used in routing) |
+| `app/public/quick-create.js` | cattr-server | Full rewrite |
+| `Dockerfile` | cattr-server | COPY lines for api.php and TrackingSessionController.php |
+| `app/src/base/web-sync.js` | desktop-application | New file |
+| `app/src/routes/index.js` | desktop-application | Initialize web-sync on auth events |
+
+#### Test checklist (manual — see session doc for details)
+
+**Web bar — idle/start/stop:**
+- [ ] Dashboard loads → timer bar renders above content
+- [ ] Click task input → suggestion dropdown appears with existing tasks
+- [ ] Type partial task name → list filters
+- [ ] Type unknown name → "Create new task" option appears
+- [ ] Select existing task → project auto-fills (read-only), Start button turns blue
+- [ ] Select "Create new task" → project selector appears (editable)
+- [ ] Click Start (existing task) → timer counts up, Stop button appears (red)
+- [ ] Click Stop → time interval logged → timer resets, idle state returns
+- [ ] Navigate to Projects and back → bar re-renders, still in correct state
+
+**Web→Desktop sync:**
+- [ ] Web: Start a task → within 2s, desktop shows that task as tracking
+- [ ] Web: Stop → within 2s, desktop stops tracking
+- [ ] Single time interval logged (not doubled)
+
+**Desktop→Web sync:**
+- [ ] Desktop: click play on a task → within 2s, web bar shows that task running with live timer
+- [ ] Desktop: click stop → within 2s, web bar returns to idle
+
+**Navigation:**
+- [ ] While tracking (either side): navigate away from dashboard → bar disappears, polling stops, desktop continues uninterrupted
+- [ ] Navigate back to dashboard → bar appears, shows correct running timer
 
 ---
 
