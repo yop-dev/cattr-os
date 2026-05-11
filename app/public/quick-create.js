@@ -92,6 +92,11 @@
                         projectColor: proj ? proj.color : '#4fa6e0',
                     };
                 });
+                // If the input is focused while tasks were loading, refresh the dropdown now
+                var input = document.getElementById('qc-task-input');
+                if (!isRunning && input && document.activeElement === input) {
+                    renderSuggestions(input.value);
+                }
             })
             .catch(function() { tasks = []; });
     }
@@ -648,6 +653,9 @@
         // ── Wire events ──────────────────────────────────────────────────────
 
         var taskInput = wrapper.querySelector('#qc-task-input');
+        taskInput.addEventListener('click', function(e) {
+            e.stopPropagation(); // prevent document click from closing suggestions
+        });
         taskInput.addEventListener('focus', function() {
             taskInput.style.borderColor = '#2d6ae0';
             if (!isRunning) renderSuggestions(taskInput.value);
