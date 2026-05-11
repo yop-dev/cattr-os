@@ -55,4 +55,4 @@ COPY app/app/Http/Controllers/Api/IntervalController.php /app/app/Http/Controlle
 COPY app/routes/api.php /app/routes/api.php
 
 HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
-    CMD curl -sf http://localhost/ || exit 1
+    CMD wget -qO- http://127.0.0.1/ > /dev/null || exit 1
