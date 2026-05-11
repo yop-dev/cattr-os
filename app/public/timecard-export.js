@@ -58,9 +58,12 @@
     }
 
     function getSessionDates() {
+        var re = /^\d{4}-\d{2}-\d{2}$/;
+        var start = sessionStorage.getItem('amazingcat.session.storage.timeuse_report.start');
+        var end   = sessionStorage.getItem('amazingcat.session.storage.timeuse_report.end');
         return {
-            start: sessionStorage.getItem('amazingcat.session.storage.timeuse_report.start'),
-            end:   sessionStorage.getItem('amazingcat.session.storage.timeuse_report.end'),
+            start: (start && re.test(start)) ? start : null,
+            end:   (end   && re.test(end))   ? end   : null,
         };
     }
 
@@ -203,8 +206,8 @@
             saveBtn.disabled = true;
             saveBtn.textContent = 'Saving…';
 
-            var startIso = startInput + ':00.000Z';
-            var endIso   = endInput   + ':00.000Z';
+            var startIso = new Date(startInput).toISOString();
+            var endIso   = new Date(endInput).toISOString();
 
             saveEdit(iv.id, startIso, endIso).then(function () {
                 closeEditModal();
@@ -261,9 +264,9 @@
         if (_jspdfLoaded) { doExportPDF(intervals, dates); return; }
         _jspdfLoading = true;
         if (btn) { btn.disabled = true; btn.textContent = 'Loading…'; }
-        loadScript('https://cdn.jsdelivr.net/npm/jspdf@2.5.1/dist/jspdf.umd.min.js')
+        loadScript('/jspdf.umd.min.js')
             .then(function () {
-                return loadScript('https://cdn.jsdelivr.net/npm/jspdf-autotable@3.8.2/dist/jspdf.plugin.autotable.min.js');
+                return loadScript('/jspdf.plugin.autotable.min.js');
             })
             .then(function () {
                 _jspdfLoaded  = true;

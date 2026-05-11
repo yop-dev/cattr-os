@@ -43,6 +43,8 @@ COPY app/public/time-interval-helpers.js /app/public/time-interval-helpers.js
 
 # C-013: Timecard export — per-interval table + jsPDF direct download on Time Use Report page
 COPY app/public/timecard-export.js /app/public/timecard-export.js
+COPY app/public/jspdf.umd.min.js /app/public/jspdf.umd.min.js
+COPY app/public/jspdf.plugin.autotable.min.js /app/public/jspdf.plugin.autotable.min.js
 
 # C-017: Screenshots grouped view — custom grid replacing native screenshot grid
 COPY app/public/screenshots-grouped.js /app/public/screenshots-grouped.js
