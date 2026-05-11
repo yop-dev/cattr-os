@@ -968,6 +968,8 @@ Neither option is clean enough. Option A requires distributing a patched `.exe` 
 | BUG-006 | Company Settings — Actions column buttons misaligned across all settings list pages | ✅ Fixed | Medium |
 | BUG-007 | Reports page ignores user filter on initial load — shows all users instead of selected one | ✅ Fixed | Medium |
 | BUG-008 | Desktop web-sync polling never starts when app launches with a saved token | ✅ Fixed | High |
+| BUG-009 | Tasks/projects created on web don't appear in desktop (and vice versa) without manual refresh | ✅ Fixed | Medium |
+| BUG-010 | 500 error when creating a task with a name that exists in another project | ✅ Fixed | High |
 
 ---
 
@@ -1316,3 +1318,103 @@ Authentication.events.on('logged-out', () => webSync.stopSync());
 - [x] Launch desktop app with saved login → start timer from web → desktop starts tracking within 2s ✅
 - [x] Stop from web → desktop stops within 2s ✅
 - [x] Start from desktop → web bar reflects within 2s (regression — was always working) ✅
+
+---
+
+### BUG-009 — Tasks/projects created on web or desktop don't appear without manual refresh
+
+**Status:** ✅ Fixed — 2026-05-11
+**Discovered:** 2026-05-11
+**Severity:** Medium — users must manually refresh to see newly created tasks/projects
+
+#### Symptom
+
+After creating a task or project on the web, it did not appear in the desktop app task list until the user clicked the refresh button (or vice versa). Neither app pushed change notifications to the other.
+
+#### Root Cause
+
+The desktop app only fetches the task list at login and on manual refresh. The web app does not push any IPC or websocket notification to the desktop when resources are created. There is no polling mechanism for the task list in either direction.
+
+#### Fix
+
+Two-part fix in the desktop app:
+
+**1. Periodic background sync — `app/renderer/js/components/App.vue`**
+
+Added a 60-second `setInterval` in `mounted()` that calls `tasks/sync` via IPC and dispatches `syncTasks` to the Vuex store. Cleared in `beforeDestroy()`. Skips silently if not authenticated or if the IPC call fails.
+
+**2. On-demand sync in web-sync polling — `app/src/base/web-sync.js`**
+
+When the web starts a timer for a task ID that isn't in the local DB (`localTask === null`), the code now calls `Tasks.syncTasks()` and retries the lookup before giving up. This covers the case where the web started a session for a task that was created on the web and hasn't been synced to the desktop yet.
+
+#### Files Modified
+
+| File | Tracked location |
+|---|---|
+| `app/renderer/js/components/App.vue` | desktop-application repo |
+| `app/src/base/web-sync.js` | desktop-application repo |
+
+#### Test
+
+- [x] Create task on web → appears in desktop within 60s without manual refresh ✅
+- [x] Create task on desktop → appears after desktop sync cycle ✅
+- [x] Web starts timer for unsynced task → desktop syncs and starts tracking ✅
+
+---
+
+### BUG-010 — 500 error when creating a task with a name that already exists in another project
+
+**Status:** ✅ Fixed — 2026-05-11
+**Discovered:** 2026-05-11
+**Severity:** High — any employee trying to reuse a task name across projects gets a 500
+
+#### Symptom
+
+Creating a task with a name that already exists in a different project returned HTTP 500. The error occurred even when the projects were distinct, so the name conflict was not the actual cause.
+
+#### Root Cause
+
+The `Task::boot()` observer (in the upstream model) runs after every task is created:
+
+```php
+static::created(static function (Task $task) {
+    dispatch(static function () use ($task) {
+        foreach ($task->users as $user) {
+            $task->project->users()->firstOrCreate(
+                ['id' => $user->id],
+                ['role_id' => \App\Enums\Role::USER]
+            );
+        }
+    });
+});
+```
+
+`BelongsToMany::firstOrCreate` queries the related `users` table scoped to the project's pivot. When the user is **not** in the project's pivot (e.g., an employee who just created a task in a visible project via C-011), Laravel finds no match and attempts to `INSERT` a new `User` row with only `['id' => ..., 'role_id' => ...]` — missing required columns (email, name, password, etc.) → SQL constraint violation → 500.
+
+The same bug affected the `updated` observer.
+
+The 500 was mistakenly attributed to a duplicate task name because that coincided with C-011 making all projects visible, so employees were often creating tasks in projects they weren't pivot members of.
+
+#### Fix
+
+`app/app/Models/Task.php` — replace `firstOrCreate` with `syncWithoutDetaching` in both the `created` and `updated` observers:
+
+```php
+$task->project->users()->syncWithoutDetaching(
+    [$user->id => ['role_id' => \App\Enums\Role::USER]]
+);
+```
+
+`syncWithoutDetaching` operates only on the pivot table — it adds the user as a project member if they're not already one, without touching the `users` table at all.
+
+#### Files Modified
+
+| File | Tracked location |
+|---|---|
+| `app/app/Models/Task.php` | `C:\cattr-server\app\app\Models\Task.php` |
+
+#### Test
+
+- [x] Employee creates task in project they are not a member of → succeeds, no 500 ✅
+- [x] Task name reused across different projects → no error ✅
+- [x] Creator is auto-added to project as member via pivot ✅
