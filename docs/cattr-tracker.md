@@ -841,11 +841,25 @@ Complete replacement of the C-009 quick-create bar (~440 lines → ~780 lines). 
 
 **Desktop — `app/src/base/web-sync.js`** (new file)
 
-Standalone module that hooks into `TaskTracker` events and polls the server. Initialized in `app/src/routes/index.js` on `'authenticated'` event, stopped on `'logged-out'`.
+Standalone module that hooks into `TaskTracker` events and polls the server. Initialized in `app/src/routes/index.js` unconditionally on load (see bug fix below), stopped on `'logged-out'`.
 
 - **Polling (1s):** if server session exists and desktop is idle → `TaskTracker.start(localTask.id)` (looks up local task by `externalId`); if server session gone and desktop is running → `TaskTracker.stop(pushInterval)` where `pushInterval = !_externalWebSession`; if task switches externally → `TaskTracker.start(newLocalTask.id)`
 - **Desktop → Server:** `TaskTracker.on('started')` and `TaskTracker.on('switched')` → `POST /api/tracking/start` with `owner: 'desktop'`; `TaskTracker.on('stopped')` → `POST /api/tracking/stop`
 - **Echo suppression:** `_startedExternally` and `_stoppedExternally` flags prevent the module from calling the server when it initiated the state change itself
+
+**Desktop — Clockify-style active task card (2026-05-11)**
+
+Redesigned the desktop task list UI to match Clockify's layout:
+
+- **`app/renderer/js/components/user/tasks/Tracker.vue`** — full template + style rewrite. Originally a 40px bottom bar; now a card that appears just below the toolbar (above the task list) only when tracking is active. Shows: task name (clickable), project with blue dot (clickable), current session elapsed timer (`HH:MM:SS`), red round stop button. Timer is driven by a local `setInterval` anchored to the moment tracking started — NOT the store's `totalTime` getter (which accumulates all-time task duration and would show the wrong value).
+- **`app/renderer/js/components/user\User.vue`** — `<tracker>` moved from bottom of layout to above the `.view` content area.
+- **`app/renderer/js/components/user/tasks/Task.vue`** — timer badge on each task row replaced with a plain ▶ play icon button (`el-icon-video-play`, type=text). Active task row shows no button (it's shown in the card above). This removes the per-row cumulative tracked time display which was confusing alongside the session timer in the card.
+
+**Bug fix — `startSync()` not called on token restore (2026-05-11)**
+
+`'authenticated'` only fires when the user logs in fresh — not when the app restores a saved token from the system keychain on startup. With the event-only approach, any user who was already logged in when they launched the app would never start polling, making web→desktop sync silently dead.
+
+Fix: call `webSync.startSync()` unconditionally in `app/src/routes/index.js` immediately after requiring `web-sync.js`. `pollOnce()` silently returns on any API error (network failure, 401), so starting the poll before auth resolves is safe. The `'authenticated'` listener is kept for fresh logins (redundant but idempotent — `startSync()` checks `if (pollTimer) return`).
 
 #### Key technical finding — Composer classmap in upstream Docker image
 
@@ -860,29 +874,39 @@ New PHP controller classes cannot be added to the running container simply via `
 | `app/public/quick-create.js` | cattr-server | Full rewrite |
 | `Dockerfile` | cattr-server | COPY lines for api.php and TrackingSessionController.php |
 | `app/src/base/web-sync.js` | desktop-application | New file |
-| `app/src/routes/index.js` | desktop-application | Initialize web-sync on auth events |
+| `app/src/routes/index.js` | desktop-application | Call startSync() unconditionally; keep 'authenticated' listener |
+| `app/renderer/js/components/user/tasks/Tracker.vue` | desktop-application | Full template+style rewrite — Clockify-style active task card |
+| `app/renderer/js/components/user/User.vue` | desktop-application | Moved `<tracker>` from bottom to top of content area |
+| `app/renderer/js/components/user/tasks/Task.vue` | desktop-application | Replaced timer badge with ▶ play button; hide button for active task |
 
 #### Test checklist (manual — see session doc for details)
 
 **Web bar — idle/start/stop:**
-- [ ] Dashboard loads → timer bar renders above content
-- [ ] Click task input → suggestion dropdown appears with existing tasks
-- [ ] Type partial task name → list filters
-- [ ] Type unknown name → "Create new task" option appears
-- [ ] Select existing task → project auto-fills (read-only), Start button turns blue
-- [ ] Select "Create new task" → project selector appears (editable)
-- [ ] Click Start (existing task) → timer counts up, Stop button appears (red)
-- [ ] Click Stop → time interval logged → timer resets, idle state returns
+- [x] Dashboard loads → timer bar renders above content ✅
+- [x] Click task input → suggestion dropdown appears with existing tasks ✅
+- [x] Type partial task name → list filters ✅
+- [x] Type unknown name → "Create new task" option appears ✅
+- [x] Select existing task → project auto-fills (read-only), Start button turns blue ✅
+- [x] Select "Create new task" → project selector appears (editable) ✅
+- [x] Click Start (existing task) → timer counts up, Stop button appears (red) ✅
+- [x] Click Stop → time interval logged → timer resets, idle state returns ✅
 - [ ] Navigate to Projects and back → bar re-renders, still in correct state
 
+**Desktop app UI:**
+- [x] Active task card appears above task list when tracking, hidden when idle ✅
+- [x] Card shows task name, project dot, session elapsed timer, red stop button ✅
+- [x] Session timer starts from 00:00:00 on each new start (not cumulative task total) ✅
+- [x] Task rows show ▶ play button; active task row shows no button ✅
+- [x] Clicking play on a different task switches tracking ✅
+
 **Web→Desktop sync:**
-- [ ] Web: Start a task → within 2s, desktop shows that task as tracking
-- [ ] Web: Stop → within 2s, desktop stops tracking
-- [ ] Single time interval logged (not doubled)
+- [x] Web: Start a task → within 2s, desktop shows that task as tracking ✅
+- [x] Web: Stop → within 2s, desktop stops tracking ✅
+- [ ] Single time interval logged (not doubled) — verify in Reports
 
 **Desktop→Web sync:**
-- [ ] Desktop: click play on a task → within 2s, web bar shows that task running with live timer
-- [ ] Desktop: click stop → within 2s, web bar returns to idle
+- [x] Desktop: click play on a task → within 2s, web bar shows that task running with live timer ✅
+- [x] Desktop: click stop → within 2s, web bar returns to idle ✅
 
 **Navigation:**
 - [ ] While tracking (either side): navigate away from dashboard → bar disappears, polling stops, desktop continues uninterrupted
@@ -943,6 +967,7 @@ Neither option is clean enough. Option A requires distributing a patched `.exe` 
 | BUG-005 | Task "Create" button never visible for employees even when assigned to a project | ✅ Fixed | High |
 | BUG-006 | Company Settings — Actions column buttons misaligned across all settings list pages | ✅ Fixed | Medium |
 | BUG-007 | Reports page ignores user filter on initial load — shows all users instead of selected one | ✅ Fixed | Medium |
+| BUG-008 | Desktop web-sync polling never starts when app launches with a saved token | ✅ Fixed | High |
 
 ---
 
@@ -1243,3 +1268,51 @@ currentUserIds = null;
 - [x] Navigate to Reports with a user pre-selected → table loads only that user's data on first render ✅
 - [x] Change user selection → table re-fetches for new selection ✅
 - [x] No user selected → table shows all users ✅
+
+---
+
+### BUG-008 — Desktop web-sync polling never starts when app launches with saved token
+
+**Status:** ✅ Fixed — 2026-05-11
+**Discovered:** 2026-05-11
+**Severity:** High — web→desktop sync completely dead for any user already logged in
+
+#### Symptom
+
+Web→desktop sync did not work after rebuilding the desktop app with UI changes. Starting a timer from the web did not cause the desktop to begin tracking, and stopping from the web did not stop the desktop. Desktop→web worked (TaskTracker event handlers fired correctly).
+
+#### Root Cause
+
+`web-sync.js` was initialized in `routes/index.js` by listening for the `'authenticated'` event on the `Authentication` module:
+
+```javascript
+Authentication.events.on('authenticated', () => webSync.startSync());
+```
+
+`'authenticated'` is only emitted when the user completes a fresh login (`authenticate()` or SSO). When the app starts with a valid token already stored in the system keychain, `getToken()` returns the saved token directly without calling `authenticate()` — no `'authenticated'` event fires. `startSync()` is never called, so `pollTimer` remains null and polling never starts.
+
+The desktop→web direction still worked because `TaskTracker.on('started/switched/stopped')` event handlers are registered at module load time (not gated on `startSync()`), so they fired whenever the user started/stopped from the desktop.
+
+#### Fix
+
+`app/src/routes/index.js` — call `webSync.startSync()` unconditionally immediately after requiring `web-sync.js`:
+
+```javascript
+webSync.startSync(); // start immediately — covers saved-token app launches
+Authentication.events.on('authenticated', () => webSync.startSync()); // idempotent for fresh logins
+Authentication.events.on('logged-out', () => webSync.stopSync());
+```
+
+`startSync()` is idempotent (`if (pollTimer) return` guard), and `pollOnce()` silently returns on any API error, so polling before auth resolves is safe.
+
+#### Files Modified
+
+| File | Tracked location |
+|---|---|
+| `app/src/routes/index.js` | desktop-application repo |
+
+#### Test
+
+- [x] Launch desktop app with saved login → start timer from web → desktop starts tracking within 2s ✅
+- [x] Stop from web → desktop stops within 2s ✅
+- [x] Start from desktop → web bar reflects within 2s (regression — was always working) ✅
