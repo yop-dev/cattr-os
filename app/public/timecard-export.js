@@ -206,8 +206,8 @@
             saveBtn.disabled = true;
             saveBtn.textContent = 'Saving…';
 
-            var startIso = new Date(startInput).toISOString();
-            var endIso   = new Date(endInput).toISOString();
+            var startIso = new Date(startInput + ':00Z').toISOString();
+            var endIso   = new Date(endInput   + ':00Z').toISOString();
 
             saveEdit(iv.id, startIso, endIso).then(function () {
                 closeEditModal();
