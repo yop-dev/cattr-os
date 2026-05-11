@@ -51,3 +51,7 @@ COPY app/public/screenshots-grouped.js /app/public/screenshots-grouped.js
 COPY app/app/Http/Requests/Interval/EditTimeIntervalRequest.php /app/app/Http/Requests/Interval/EditTimeIntervalRequest.php
 # C-004: Fix upstream bug — filter listener missing return $requestData, causing fill(null) crash
 COPY app/app/Http/Controllers/Api/IntervalController.php /app/app/Http/Controllers/Api/IntervalController.php
+
+# C-020: Tracking session API for web↔desktop bidirectional timer sync
+COPY app/routes/api.php /app/routes/api.php
+COPY app/app/Http/Controllers/TrackingSessionController.php /app/app/Http/Controllers/TrackingSessionController.php
