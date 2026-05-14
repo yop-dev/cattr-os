@@ -321,17 +321,23 @@ Route::group([
 
     // Tracking session sync (bidirectional web ↔ desktop)
     $router->post('tracking/current', function (\Illuminate\Http\Request $request) {
-        $session = \Illuminate\Support\Facades\Cache::get("tracking_session_{$request->user()->id}");
+        $userId = optional($request->user())->id;
+        if (!$userId) return response()->json(['error' => 'Unauthenticated'], 401);
+        $session = \Illuminate\Support\Facades\Cache::get("tracking_session_{$userId}");
         return response()->json(['data' => $session]);
-    });
+    })->middleware('throttle:600,1');
     $router->post('tracking/start', function (\Illuminate\Http\Request $request) {
+        $userId = optional($request->user())->id;
+        if (!$userId) return response()->json(['error' => 'Unauthenticated'], 401);
         $request->validate([
             'task_id' => 'required|integer',
-            'start_at' => 'required|string',
+            'start_at' => 'required|date|before_or_equal:now',
             'owner'    => 'required|in:web,desktop',
         ]);
-        $task = \App\Models\Task::withoutGlobalScopes()
-            ->with('project')
+        $task = \App\Models\Task::with('project')
+            ->whereHas('users', function ($q) use ($request) {
+                $q->where('users.id', $request->user()->id);
+            })
             ->findOrFail($request->task_id);
         $session = [
             'task_id'      => $task->id,
@@ -341,13 +347,15 @@ Route::group([
             'start_at'     => $request->start_at,
             'owner'        => $request->owner,
         ];
-        \Illuminate\Support\Facades\Cache::put("tracking_session_{$request->user()->id}", $session, 86400);
+        \Illuminate\Support\Facades\Cache::put("tracking_session_{$userId}", $session, 86400);
         return response()->json(['data' => $session]);
-    });
+    })->middleware('throttle:600,1');
     $router->post('tracking/stop', function (\Illuminate\Http\Request $request) {
-        \Illuminate\Support\Facades\Cache::forget("tracking_session_{$request->user()->id}");
+        $userId = optional($request->user())->id;
+        if (!$userId) return response()->json(['error' => 'Unauthenticated'], 401);
+        \Illuminate\Support\Facades\Cache::forget("tracking_session_{$userId}");
         return response()->json(['data' => null]);
-    });
+    })->middleware('throttle:600,1');
 });
 
 Route::any('(.*)', [Controller::class, 'universalRoute'])->name('universal_route');
