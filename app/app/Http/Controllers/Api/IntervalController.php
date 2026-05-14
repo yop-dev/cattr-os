@@ -538,10 +538,8 @@ class IntervalController extends ItemController
         Filter::listen(
             Filter::getRequestFilterName(),
             static function (array $requestData) {
-                $timezone = Settings::scope('core')->get('timezone', 'UTC');
-
-                $requestData['start_at'] = Carbon::parse($requestData['start_at'])->setTimezone($timezone);
-                $requestData['end_at'] = Carbon::parse($requestData['end_at'])->setTimezone($timezone);
+                $requestData['start_at'] = Carbon::parse($requestData['start_at'])->utc()->toDateTimeString();
+                $requestData['end_at'] = Carbon::parse($requestData['end_at'])->utc()->toDateTimeString();
 
                 return $requestData;
             }
@@ -756,8 +754,8 @@ class IntervalController extends ItemController
             }
 
             $requestData = $intervalValidator->validated();
-            $requestData['start_at'] = Carbon::parse($requestData['start_at'])->setTimezone($timezone);
-            $requestData['end_at'] = Carbon::parse($requestData['end_at'])->setTimezone($timezone);
+            $requestData['start_at'] = Carbon::parse($requestData['start_at'])->utc()->toDateTimeString();
+            $requestData['end_at'] = Carbon::parse($requestData['end_at'])->utc()->toDateTimeString();
 
             TimeInterval::create($requestData);
             $creationResult[] = [
