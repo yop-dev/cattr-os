@@ -970,6 +970,16 @@ Neither option is clean enough. Option A requires distributing a patched `.exe` 
 | BUG-008 | Desktop web-sync polling never starts when app launches with a saved token | ✅ Fixed | High |
 | BUG-009 | Tasks/projects created on web don't appear in desktop (and vice versa) without manual refresh | ✅ Fixed | Medium |
 | BUG-010 | 500 error when creating a task with a name that exists in another project | ✅ Fixed | High |
+| BUG-011 | Desktop timer resets to 00:00:00 when syncing from web — should anchor to server start_at | ✅ Fixed | Medium |
+| BUG-012 | Screenshots page shows wrong date / no screenshots — UTC vs local timezone day boundary mismatch | ✅ Fixed | Medium |
+| BUG-013 | Web-started session records only partial duration when stopped from desktop | ✅ Fixed | High |
+| BUG-014 | Screenshots page shows blank card for stop interval — has_screenshot always true for null screenshot_id | ⏳ Pending | Low |
+| BUG-015 | Screenshots page — projects filter has no effect | ✅ Fixed | Medium |
+| BUG-016 | Screenshots timestamps hardcoded to UTC — matches Dashboard timeline behavior | ✅ Fixed | Medium |
+| BUG-017 | Desktop task switching while timer is running is unreliable — hide all play buttons when tracking | ✅ Fixed | Medium |
+| BUG-018 | Blank screenshot thumbnails appear in desktop/web views — likely connected to BUG-014 stop interval issue | ⏳ Pending | Low |
+| BUG-019 | Web-owned sessions: web stop logs full interval overlapping desktop gap+periodic — double-counting if web succeeds, silent loss if rate-limited | ✅ Fixed | High |
+| BUG-020 | EAUTH502 Too Many Attempts — tracking poll routes rate-limited at 120 req/min; 1-second polling from web + desktop exceeds budget | ✅ Fixed | High |
 
 ---
 
@@ -1418,3 +1428,520 @@ $task->project->users()->syncWithoutDetaching(
 - [x] Employee creates task in project they are not a member of → succeeds, no 500 ✅
 - [x] Task name reused across different projects → no error ✅
 - [x] Creator is auto-added to project as member via pivot ✅
+
+---
+
+### BUG-011 — Desktop timer resets to 00:00:00 when syncing from web
+
+**Status:** ✅ Fixed — 2026-05-13
+**Discovered:** 2026-05-13
+**Severity:** Medium — timer display is wrong after web→desktop sync; does not affect interval logging
+
+#### Symptom
+
+Desktop tracker card showed `00:00:31` while the web bar showed `00:01:54` for the same running session. The desktop timer always reset to zero when it synced in from the web, regardless of how long the session had been running.
+
+#### Root Cause
+
+`Tracker.vue._startSessionTimer()` always anchored `sessionStartMs = Date.now()` — the moment the desktop received the sync signal — with no knowledge of the server session's `start_at`. The web bar correctly uses `session.start_at` from the server. The desktop always displayed elapsed time from when it joined the session, not from when the session began.
+
+#### Fix
+
+Threaded the server's `start_at` through the IPC event chain into the Vuex store, then used it as the timer anchor in `Tracker.vue`.
+
+**`app/src/base/web-sync.js`** (desktop-application)
+
+Added `_externalStartAt` module variable. Set to `srv.start_at` before each `TaskTracker.start()` call triggered by an external session (all three code paths: idle→start, post-sync start, task switch). Cleared to `null` after the call. Exported `getExternalStartAt()`.
+
+**`app/src/routes/task-tracking.js`** (desktop-application)
+
+Required `web-sync`. Added `startAt: webSync.getExternalStartAt() || null` to the `tracking/event-started` IPC event in both `TaskTracker.on('started')` and `TaskTracker.on('switched')` handlers. For desktop-native starts, `getExternalStartAt()` returns `null` — no behavior change.
+
+**`app/renderer/js/storage/store.js`** (desktop-application)
+
+Added `trackingStartAt: null` to state, `trackingStartAt: s => s.trackingStartAt` getter, and `setTrackingStartAt(state, payload)` mutation.
+
+**`app/renderer/js/components/user/User.vue`** (desktop-application)
+
+In `tracking/event-started` handler: `this.$store.commit('setTrackingStartAt', req.packet.body.startAt || null)` before dispatching `setTrackingTask`. In `tracking/event-stopped` handler: `this.$store.commit('setTrackingStartAt', null)`.
+
+**`app/renderer/js/components/user/tasks/Tracker.vue`** (desktop-application)
+
+`_startSessionTimer()` now reads `this.$store.getters.trackingStartAt`. If set, uses it as `sessionStartMs`; otherwise falls back to `Date.now()`. Seeds `sessionSeconds` immediately as `Math.floor((Date.now() - sessionStartMs) / 1000)` so the display is correct on the first render tick.
+
+#### Key technical note
+
+`_externalStartAt` is valid only during the synchronous window inside `await TaskTracker.start()`. The `'started'` event fires synchronously within that call, and `task-tracking.js` reads `getExternalStartAt()` at that moment. Node.js single-threaded execution guarantees no concurrent access.
+
+#### Files Modified
+
+| File | Tracked location |
+|---|---|
+| `app/src/base/web-sync.js` | desktop-application repo |
+| `app/src/routes/task-tracking.js` | desktop-application repo |
+| `app/renderer/js/storage/store.js` | desktop-application repo |
+| `app/renderer/js/components/user/User.vue` | desktop-application repo |
+| `app/renderer/js/components/user/tasks/Tracker.vue` | desktop-application repo |
+
+#### Test
+
+- [ ] Web: Start a task → within 2s, desktop tracker card shows same elapsed time as web bar
+- [ ] Web: Stop, wait, Start again → desktop syncs and shows correct elapsed time (not reset to 0)
+- [ ] Desktop: click ▶ on a task → timer starts from 00:00:00 (native start unaffected)
+- [ ] Desktop: click ▶ on a different task while running → timer resets to 00:00:00 for new session
+
+**Note:** Requires desktop app rebuild to take effect.
+
+---
+
+### BUG-013 — Web-started session records only partial duration when stopped from desktop
+
+**Status:** ✅ Fixed — 2026-05-13
+**Discovered:** 2026-05-13
+**Severity:** High — sessions started on the web and stopped on the desktop recorded only a fraction of the actual duration
+
+#### Symptom
+
+A session started on the web and stopped on the desktop app recorded far less time than the actual duration. Example: a 7-minute session recorded only 42 seconds ("eyes" test). Follow-up tests ("ears", "nose") showed similar under-counting, plus duplicate/unsynced SQLite intervals from secondary bugs exposed during fixing.
+
+#### Root Cause — Three Compounding Issues
+
+**1. No gap interval for pre-detection period**
+
+When the desktop detects a web session via `pollOnce()`, it calls `TaskTracker.start()` and begins capturing intervals from that moment forward. Any time the web session was running before the desktop detected it was never recorded — there was no "catch-up" interval.
+
+Example: web starts at 16:50. Desktop detects it at 16:53. Desktop records 16:53→16:57 (4 min). The 16:50→16:53 gap (3 min) is permanently lost.
+
+The server's `TrackingSessionController.stop()` only does `Cache::forget()` — it creates no interval. The desktop is the sole interval logger for all sessions.
+
+**2. Concurrent gap pushes from 1-second polling**
+
+`pollOnce()` is called every 1 second via `setInterval`. It is `async` and `setInterval` doesn't wait for each call to complete before firing the next. While the first poll was awaiting `pushGapInterval` (with `desktopTracking` still `false`), subsequent polls also saw `desktopTracking=false` and each pushed their own gap interval — with progressively larger `endAt` timestamps. Result: multiple gap intervals for the same session (e.g. 4 overlapping gap intervals in the "ears" test).
+
+**3. STOP_DEBOUNCE false-fires from api.post returning `{success:false}`**
+
+`api.post` in the `@cattr/node` SDK never throws on network/API errors — it returns `{success: false, isNetworkError: true/false}`. The original `pollOnce()` code was:
+
+```javascript
+srv = (res && res.success && res.response?.data) ? res.response.data : null;
+```
+
+Any failed API call set `srv = null`. With `desktopTracking=true`, this incremented `_externalStopCount`. After 2 failures, `STOP_DEBOUNCE` fired: desktop stopped, `_lastPushedGapStartAt` was cleared, the same web session reappeared on the next successful poll, and a new (larger) gap interval was pushed. This cycle repeated every ~60 seconds, creating cascading duplicate SQLite intervals and corrupting the total recorded duration.
+
+#### Fix
+
+All three fixes applied to `app/src/base/web-sync.js` in the desktop application.
+
+**Fix 1 — Gap interval (catch-up)**
+
+When external start is detected and `srv.start_at` is more than `GAP_THRESHOLD_SECONDS` (30s) ago, push a catch-up interval from `srv.start_at` to `Date.now()` before calling `TaskTracker.start()`:
+
+```javascript
+const GAP_THRESHOLD_SECONDS = 30;
+
+async function pushGapInterval(taskId, startAt, endAt) {
+  const gapSeconds = Math.floor((new Date(endAt) - new Date(startAt)) / 1000);
+  if (gapSeconds < GAP_THRESHOLD_SECONDS) return;
+  // ... push via IntervalsController.pushTimeInterval(...)
+}
+```
+
+**Fix 2 — Mutex + session guard (concurrent poll prevention)**
+
+Added `_externalStartInProgress` boolean mutex: only one `pollOnce()` invocation may run the external-start routine at a time. Added `_lastPushedGapStartAt` string guard: set to `srv.start_at` before the `await pushGapInterval()` call — prevents any concurrent poll (or later re-detection after a transient stop) from pushing a second gap for the same session.
+
+`_lastPushedGapStartAt` is intentionally NOT cleared when an external stop fires — only cleared when the user themselves stops (`TaskTracker.on('stopped')`), since that signals a genuinely new session is expected next.
+
+**Fix 3 — STOP_DEBOUNCE false-fire prevention**
+
+Skip the poll entirely if `api.post` returns a non-success response:
+
+```javascript
+const res = await api.post('tracking/current', {});
+if (!res || !res.success) return;  // network/API error — don't count as "no session"
+srv = (res.response && res.response.data) ? res.response.data : null;
+```
+
+`STOP_DEBOUNCE` now only increments on definitive server-confirmed "no session" responses (successful API calls returning `null` data), not on transient failures.
+
+#### Verification ("mouth" test — taskId=36)
+
+| Interval | Start (UTC) | End (UTC) | Duration | Type |
+|---|---|---|---|---|
+| remoteId 126 | 16:50:17 | 16:53:19 | 3:01 | Gap catch-up (web start → desktop detection) |
+| remoteId 127 | 16:53:20 | 16:56:20 | 3:00 | Regular periodic |
+| remoteId 128 | 16:56:21 | 16:57:15 | 0:53 | Final on stop |
+
+All 3 intervals `synced=1`. No duplicate or unsynced rows. Total ~6:54 for a ~7-minute session. ✅
+
+#### Files Modified
+
+| File | Tracked location |
+|---|---|
+| `app/src/base/web-sync.js` | desktop-application repo |
+
+#### Test
+
+- [x] Web: Start a task, let it run ~7 min, stop from desktop → full duration recorded (gap + regular intervals) ✅
+- [x] No duplicate/unsynced intervals in SQLite after the session ✅
+- [x] No STOP_DEBOUNCE cycling (no spurious stop/restart cycles) ✅
+
+---
+
+### BUG-012 — Screenshots page shows wrong date / no screenshots
+
+**Status:** ✅ Fixed — 2026-05-13
+**Discovered:** 2026-05-13
+**Severity:** Medium — Screenshots page and Dashboard disagree on which date a screenshot belongs to; late-night screenshots invisible on the correct date
+
+#### Symptom
+
+Screenshots taken at 11 PM+ PDT appeared on the Dashboard under "May 13" but were not visible on the Screenshots page for May 13. After an initial fix attempt, they appeared under "May 12" instead.
+
+#### Root Cause
+
+Two compounding issues in `app/public/screenshots-grouped.js`:
+
+**1. `getSelectedDate()` Date object timezone shift**
+
+AT-UI's datepicker stores the selected date as `new Date('YYYY-MM-DD')` = UTC midnight. Formatting UTC midnight with `Intl.DateTimeFormat` in `America/Los_Angeles` (PDT, UTC−7) returns the previous calendar day (e.g. May 13 00:00 UTC → May 12 17:00 PDT → `"2026-05-12"`). This made every query target the wrong 24-hour window.
+
+**2. Local-timezone day bounds vs. UTC day bounds**
+
+`dayBoundsUtc(dateStr, tz)` converted the selected date to PDT-relative UTC bounds: May 13 PDT → `[May 13 07:00 UTC, May 14 06:59 UTC]`. Screenshots at 11 PM PDT May 12 have UTC timestamps of `May 13 06:xx UTC` — before the 07:00 start bound → excluded. The Dashboard's native component uses UTC midnight-to-midnight bounds, so it correctly includes `06:xx UTC May 13` under "May 13."
+
+#### Fix
+
+**`getSelectedDate()`** — for `Date` objects, replaced `Intl.DateTimeFormat(tz).format(d)` with `d.toISOString().slice(0, 10)`. This reads the UTC calendar date directly, immune to timezone offset.
+
+**`fetchIntervals()`** — replaced `dayBoundsUtc` call with plain UTC bounds:
+```javascript
+var bounds = [dateStr + ' 00:00:00', dateStr + ' 23:59:59'];
+```
+`dayBoundsUtc` function removed entirely.
+
+#### Files Modified
+
+| File | Tracked location |
+|---|---|
+| `app/public/screenshots-grouped.js` | cattr-server repo |
+
+#### Test
+
+- [x] Screenshots page, May 13 selected → late-night screenshots visible ✅
+- [x] Screenshots not visible on May 12 view ✅
+- [x] Dashboard and Screenshots page agree on screenshot dates ✅
+
+---
+
+### BUG-014 — Screenshots page shows blank card for stop interval
+
+**Status:** ⏳ Pending
+**Discovered:** 2026-05-13
+**Severity:** Low — cosmetic; one extra card appears after web-started sessions stopped from desktop
+
+#### Symptom
+
+After a web-started session is stopped from the desktop, the Screenshots page shows an extra card for the stop interval (typically ~53 seconds). The card thumbnail area is blank white — no screenshot image renders. The user expected 2 screenshot cards for a ~7-minute session but consistently got 3, with the third appearing right at the stop moment.
+
+#### Root Cause
+
+Upstream Cattr bug: the `has_screenshot` model accessor on `TimeInterval` short-circuits incorrectly when `screenshot_id` is `NULL`:
+
+```php
+// Upstream accessor in TimeInterval model:
+'has_screenshot' => static fn ($value) => !$value || Storage::exists(...)
+```
+
+`screenshot_id` is `NULL` for all intervals in our setup (the `sus_files` table is empty; screenshots are stored on disk at `screenshots/sha256(interval.id).jpg` without any DB record). `!null = true`, so the `Storage::exists()` check is never reached. Every interval returns `has_screenshot=true` regardless of whether a file exists on disk.
+
+The thumbnail endpoint (`IntervalController::showThumbnail`) does correctly check `Storage::exists(getThumbPath($interval))` and returns 404 if the file is missing. However, after four client-side fix attempts, the card continues to render — suggesting the thumbnail file for the stop interval likely **does exist on disk** (a screenshot was captured during the ~53-second window) and the endpoint returns HTTP 200 with a valid (but blank-looking) JPEG.
+
+#### Fix Attempts (all deployed — none resolved)
+
+| # | Change | Why it didn't work |
+|---|---|---|
+| 1 | `renderGroups(_allIntervals)` — filter `_allIntervals` by `has_screenshot` before rendering | `has_screenshot=true` for all intervals; filter passes everything through |
+| 2 | `onError` callback in `apiFetchImage` — remove card on non-ok HTTP response | Doesn't fire if thumbnail endpoint returns 200 |
+| 3 | `setTimeout(3000)` sweep — remove cards where `!img.dataset.blobUrl` | Blob URL is set when fetch returns 200; check never triggers |
+| 4 | `blob.size < 100` guard + sweep also checks `img.style.display === 'none'` | If the JPEG is a real file (> 100 bytes), the size guard doesn't catch it |
+
+#### Current State of `screenshots-grouped.js`
+
+The file now has all four fixes layered in, none of which resolved the issue. The most recent state:
+
+- `apiFetchImage`: throws on `blob.size < 100` (catches 0-byte responses)
+- `buildThumbnailCard` `onError`: removes card + filters from `_allIntervals` on fetch failure
+- `renderGroups` sweep (3s): removes cards where `!img.dataset.blobUrl || img.style.display === 'none'`
+
+#### Next Steps
+
+1. **Verify whether the thumbnail file exists on disk** — exec into the container and check:
+   ```bash
+   docker exec cattr-server-app-1 sh -c "ls -la /app/storage/app/public/screenshots/thumbs/ | grep $(echo -n '<interval_id>' | sha256sum | cut -d' ' -f1)"
+   ```
+   If the file exists and has non-zero size, the screenshot is real and the card is technically correct.
+
+2. **If file exists, consider filtering by duration** — hide intervals shorter than a threshold (e.g. 60 seconds) from the Screenshots page. Stop intervals are characteristically short. Risk: could hide legitimate short intervals in edge cases.
+
+3. **If file is 0 bytes or missing but endpoint returns 200** — investigate why `IntervalController::showThumbnail` is not returning 404. May need to add a `Content-Length` or content-type check in `apiFetchImage`.
+
+4. **Server-side fix (cleanest)** — fix the `has_screenshot` accessor to bypass the null short-circuit:
+   ```php
+   'has_screenshot' => static fn ($value, $attrs) =>
+       Storage::exists('screenshots/' . hash('sha256', $attrs['id']) . '.jpg')
+   ```
+   This makes the accessor accurate for our setup (no `sus_files` records) and would cause the API to return `has_screenshot=false` for intervals with no file on disk — `buildThumbnailCard` would then render a "No screenshot" placeholder instead of attempting to load a thumbnail.
+
+#### Files Modified
+
+| File | Repo | Change |
+|---|---|---|
+| `app/public/screenshots-grouped.js` | cattr-server | Four incremental fix attempts layered in (see above); none resolved |
+
+---
+
+### BUG-015 — Screenshots page: projects filter has no effect
+
+**Status:** ✅ Fixed — 2026-05-14
+**Discovered:** 2026-05-13
+**Severity:** Medium — selecting a project in the filter did not narrow the screenshot results
+
+#### Symptom
+
+Selecting a project from the project filter on the Screenshots page had no effect — all screenshots continued to show regardless of which project was selected.
+
+#### Root Cause
+
+Two compounding issues:
+
+1. **Wrong property name** — `getSelectedProjectIds()` guessed property names (`projectsList`, `projectIDs`, `projectIds`, `projects`). DevTools confirmed the actual property is `projectsList`, which is an array of project **objects** (not IDs). All guesses failed the `Array.isArray` check because the component initialized it as an empty array that only has objects after selection — but the type check was wrong.
+
+2. **API filter not a real column** — `where.project_id` was sent to the `time-intervals` API, but `project_id` is not a column on the `time_intervals` table. The API silently ignored the filter and returned all intervals regardless.
+
+#### Fix
+
+**`app/public/screenshots-grouped.js`**:
+
+- `getSelectedProjectIds()`: reads `inst.projectsList` (an array of project objects) and maps to IDs via `.map(p => p.id)`.
+- `fetchIntervals()`: removed the `where.project_id` API parameter entirely; added client-side filter after the API returns results:
+  ```javascript
+  rows = rows.filter(function(iv) {
+      return iv.task && iv.task.project && projectIds.indexOf(iv.task.project.id) !== -1;
+  });
+  ```
+  Applied only when `projectIds.length > 0`; no filter = show all screenshots.
+
+#### Files Modified
+
+| File | Repo | Change |
+|---|---|---|
+| `app/public/screenshots-grouped.js` | cattr-server | Fixed `getSelectedProjectIds()` to map objects → IDs; moved project filter from API param to client-side |
+
+#### Test
+
+- [x] Select a project → only screenshots for tasks in that project appear ✅
+- [x] No project selected → all screenshots visible ✅
+
+---
+
+### BUG-016 — Screenshots timestamps hardcoded to UTC
+
+**Status:** ✅ Fixed — 2026-05-14 (design decision: UTC everywhere)
+**Discovered:** 2026-05-13
+**Severity:** Medium
+
+#### Background
+
+Originally this was logged as "timestamps show UTC instead of company timezone (PDT)." Investigation revealed that the Dashboard's timer bar (the green intervals) already displays timestamps in UTC, not PDT. Making the Screenshots page show PDT would create an inconsistency: the same event would appear at different times on two different pages.
+
+**Decision:** UTC is the correct display timezone for all timestamp-bearing pages. The Screenshots page should match the Dashboard.
+
+#### Fix
+
+Hardcoded `'UTC'` in both timestamp formatting functions:
+
+**`app/public/screenshots-grouped.js`**:
+```javascript
+function getCompanyTimezone() {
+    return 'UTC'; // was: window.__cattrTz || 'UTC'
+}
+```
+
+**`app/public/dashboard-nav.js`**:
+```javascript
+var tz = 'UTC'; // was: window.__cattrTz || 'UTC' (both occurrences)
+```
+
+The `window.__cattrTz` injection in `app.blade.php` is still present (used by other parts of the app) but is no longer used for timestamp display.
+
+#### Timezone selector removal (same session)
+
+Since company timezone is always America/Los_Angeles and UTC display is now intentional, the timezone picker on every Reports/Screenshots page was hidden globally via `app.blade.php`:
+
+```css
+/* Hide timezone selector globally — company timezone is always America/Los_Angeles */
+.controls-row .controls-row__item:last-child { display: none !important; }
+```
+
+#### Files Modified
+
+| File | Repo | Change |
+|---|---|---|
+| `app/public/screenshots-grouped.js` | cattr-server | `getCompanyTimezone()` hardcoded to `'UTC'` |
+| `app/public/dashboard-nav.js` | cattr-server | Both `tz` variable assignments hardcoded to `'UTC'` |
+| `app/resources/views/app.blade.php` | cattr-server | CSS rule hiding timezone picker globally |
+
+#### Test
+
+- [x] Screenshots page — timestamps show UTC (match Dashboard timeline) ✅
+- [x] Dashboard nav timestamps — UTC ✅
+- [x] Timezone picker hidden on all pages ✅
+
+---
+
+### BUG-017 — Desktop task switching while timer is running is unreliable
+
+**Status:** ✅ Fixed — 2026-05-14
+**Discovered:** 2026-05-14 (during BUG-011 testing)
+**Severity:** Medium — switching tasks mid-session caused unpredictable state in the timer and interval logging
+
+#### Symptom
+
+Clicking ▶ on a different task while a session was already running produced unreliable behaviour: the timer did not always reset correctly, and the web↔desktop sync could enter an inconsistent state. The UX expectation was that users must stop the current task before starting a new one.
+
+#### Root Cause
+
+`Task.vue` used `v-if="!active"` on the play button, where `active` checks whether *this specific task* is the currently tracked one. All other task rows still showed their play buttons while a session was running, allowing mid-session switches. The switch path in `TaskTracker` and `web-sync.js` was not robust enough to handle the timer anchor and gap-interval logic cleanly in the switch case.
+
+#### Fix
+
+Changed `v-if="!active"` to `v-if="!isAnyTracking"` in `Task.vue`. Added `isAnyTracking` computed that returns `this.$store.getters.trackStatus` (true whenever any task is being tracked, regardless of which one). All play buttons are now hidden while tracking is active — users must stop via the Tracker card's red stop button, then start a new task.
+
+#### Files Modified
+
+| File | Repo | Change |
+|---|---|---|
+| `app/renderer/js/components/user/tasks/Task.vue` | desktop-application | `v-if="!active"` → `v-if="!isAnyTracking"`; added `isAnyTracking` computed |
+
+#### Test
+
+- [ ] Start a task → all other task rows show no play button
+- [ ] Stop task → play buttons reappear on all rows
+- [ ] Start via web → desktop shows no play buttons on any row
+- [ ] Stop via web → play buttons reappear
+
+---
+
+### BUG-018 — Blank screenshot thumbnails in desktop and web views
+
+**Status:** ⏳ Pending
+**Discovered:** 2026-05-14 (during BUG-011 testing)
+**Severity:** Low — cosmetic; blank white cards appear where a screenshot thumbnail should show
+
+#### Symptom
+
+During BUG-011 testing, blank screenshot thumbnails were observed in both the desktop app and the web Screenshots page. The cards render but the thumbnail image area is blank white. Likely connected to BUG-014 (stop interval producing a near-blank screenshot captured during the ~53-second window when the screen may have been idle or minimized).
+
+#### Next Steps
+
+Investigate together with BUG-014 — check whether the blank thumbnails correspond to the stop interval or are a separate class of missing-file issue. See BUG-014 for the disk-check procedure.
+
+---
+
+### BUG-019 — Web-owned sessions: double-logging / silent time loss
+
+**Status:** ✅ Fixed — 2026-05-14
+**Discovered:** 2026-05-14 (during BUG-013 full-session test)
+**Severity:** High — sessions started on the web could record double the actual time; or lose time entirely depending on rate limiting
+
+#### Symptom
+
+A 6-minute web-started session (web start → web stop) produced two 3-minute intervals in Reports instead of one 6-minute interval. The second 3-minute block was created by the web stop handler, fully overlapping the desktop's own gap+periodic intervals.
+
+#### Root Cause — Design Conflict
+
+Two separate code paths were both trying to log intervals for the same session:
+
+1. **Desktop** — always logs: gap interval (web-start → desktop-detection) + periodic intervals (capture cycle every ~3 min) + tail interval (last periodic → actual stop)
+2. **Web stop handler** (`quick-create.js`) — also tried to log: one large interval from `session.start_at` to `Date.now()` (the full session)
+
+These overlap entirely. If both succeed → double-counting. If the web API call is rate-limited (EAUTH502) → web interval lost, desktop intervals correct (appeared "fixed by accident" during earlier testing).
+
+#### Fix — Desktop Owns All Interval Logging
+
+**`app/public/quick-create.js`** — removed the `owner === 'web'` interval creation block from `handleStop()`. Web stop now only calls `POST /api/tracking/stop` to clear the server cache:
+
+```javascript
+// Desktop owns all interval logging (gap + periodic + tail).
+// Web stop only signals the server to clear the session cache.
+apiFetch('/api/tracking/stop', { method: 'POST', body: '{}' }).then(function() {
+    showIdleState();
+}).catch(function() {
+    showError('Error stopping tracker');
+}).finally(function() {
+    setLoading(false);
+});
+```
+
+**`app/src/base/web-sync.js`** — changed `pushInterval = !_externalWebSession` → `pushInterval = true`. Desktop now always pushes the tail interval (last periodic → actual stop) on external stop, regardless of whether the session was started from web or desktop.
+
+#### Files Modified
+
+| File | Repo | Change |
+|---|---|---|
+| `app/public/quick-create.js` | cattr-server | Removed interval creation from stop handler; web stop only clears session cache |
+| `app/src/base/web-sync.js` | desktop-application | `pushInterval = !_externalWebSession` → `pushInterval = true` |
+
+#### Test
+
+- [x] Web: start a task, wait ~6 min, web: stop → one merged row in Reports, correct total duration ✅
+- [x] No duplicate intervals in Reports ✅
+- [x] Desktop: start a task, desktop: stop → normal single interval, no regression ✅
+
+---
+
+### BUG-020 — EAUTH502 Too Many Attempts on tracking routes
+
+**Status:** ✅ Fixed — 2026-05-14
+**Discovered:** 2026-05-14
+**Severity:** High — API 429 errors appeared mid-session; desktop and web sync polling returned EAUTH502
+
+#### Symptom
+
+During testing, the browser console and desktop logs showed `EAUTH502 Too Many Attempts` on tracking API calls (`/api/tracking/current`, `/api/tracking/start`, `/api/tracking/stop`). Sessions sometimes appeared to stop mid-tracking due to the poll returning a non-success response.
+
+#### Root Cause
+
+Tracking routes were throttled at `throttle:120,1` (120 requests per minute). With:
+- Web bar polling `POST /api/tracking/current` every 1 second = 60 req/min
+- Desktop polling `POST /api/tracking/current` every 1 second = 60 req/min
+
+That's already 120 req/min from tracking alone — at the exact limit. Any other API call (tasks sync, interval push, etc.) pushed the total over 120 and triggered 429s.
+
+#### Fix
+
+`app/routes/api.php` — changed throttle limit on all three tracking routes from 120 to 600:
+
+```php
+// Before:
+->middleware('throttle:120,1')
+
+// After:
+->middleware('throttle:600,1')
+```
+
+Applies to: `tracking/current`, `tracking/start`, `tracking/stop`.
+
+600 req/min gives 10 requests per second of headroom — sufficient for both pollers plus any burst from interval pushes and task syncs.
+
+#### Files Modified
+
+| File | Repo | Change |
+|---|---|---|
+| `app/routes/api.php` | cattr-server | `throttle:120,1` → `throttle:600,1` on three tracking routes |
+
+#### Test
+
+- [x] 6+ minute tracking session (web start, web stop) → no EAUTH502 in browser console ✅
+- [x] Desktop polling active simultaneously → no 429 errors in desktop logs ✅
