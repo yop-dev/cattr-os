@@ -45,27 +45,13 @@
             '#dn-reports-link > .at-menu__item-link.dn-active { color: #2e2ef9 !important; }',
             '#dn-reports-link > .at-menu__item-link::after { content: ""; position: absolute; bottom: -0.75em; left: 0; width: 100%; height: 3px; background: currentColor; display: none; }',
             '#dn-reports-link > .at-menu__item-link.dn-active::after { display: block; }',
-            // Dashboard screenshots custom grid
-            '#dn-sc-grid { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }',
-            '.dn-sc-card { background: #fff; border: 1px solid #e0e0e8; border-radius: 6px; overflow: hidden; width: 150px; flex-shrink: 0; cursor: pointer; transition: box-shadow .15s; }',
-            '.dn-sc-card:hover { box-shadow: 0 2px 8px rgba(0,0,0,.12); }',
-            '.dn-sc-img { height: 80px; width: 100%; object-fit: cover; display: block; }',
-            '.dn-sc-info { padding: 5px 7px; }',
-            '.dn-sc-task { font-size: 11px; font-weight: 500; color: #333; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }',
-            '.dn-sc-project { font-size: 10px; color: #2e2ef9; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; margin-top: 1px; }',
-            '.dn-sc-time { font-size: 10px; color: #888; margin-top: 1px; }',
-            // Dashboard screenshot modal
-            '#' + 'dn-sc-modal { display: none; position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,.7); z-index: 9999; align-items: center; justify-content: center; }',
-            '.dn-modal__panel { background: #fff; border-radius: 8px; max-width: 1200px; width: 92%; display: flex; flex-direction: column; box-shadow: 0 16px 48px rgba(0,0,0,.3); }',
-            '.dn-modal__header { padding: 14px 20px; border-bottom: 1px solid #eee; display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }',
-            '.dn-modal__title { font-weight: 600; color: #333; font-size: 15px; }',
-            '.dn-modal__meta { font-size: 12px; color: #888; margin-top: 3px; }',
-            '.dn-modal__close { background: none; border: none; font-size: 22px; color: #aaa; cursor: pointer; line-height: 1; padding: 0 4px; flex-shrink: 0; }',
-            '.dn-modal__body { overflow: hidden; display: flex; align-items: center; justify-content: center; background: #f5f5f5; min-height: 200px; }',
-            '.dn-modal__img { max-width: 100%; max-height: 80vh; object-fit: contain; display: block; }',
-            '.dn-modal__footer { padding: 12px 20px; border-top: 1px solid #eee; display: flex; gap: 8px; }',
-            '.dn-modal__btn { background: #fff; border: 1px solid #ddd; border-radius: 4px; padding: 6px 14px; cursor: pointer; color: #555; font-size: 13px; }',
-            '.dn-modal__btn:disabled { opacity: 0.4; cursor: not-allowed; }',
+            // Dashboard layout: single column — bar on top, sidebar (totals) below
+            'body.dn-on-timeline .timeline { display: flex !important; flex-direction: column !important; gap: 16px; }',
+            'body.dn-on-timeline .timeline .controls-row { order: 1; width: 100% !important; }',
+            'body.dn-on-timeline .timeline .at-container.intervals { order: 2; width: 100% !important; max-width: none !important; }',
+            'body.dn-on-timeline .timeline .at-container.sidebar { order: 3; width: 100% !important; max-width: none !important; }',
+            // Hide screenshots section entirely
+            'body.dn-on-timeline .screenshots { display: none !important; }',
         ].join('\n');
         document.head.appendChild(style);
     }
@@ -431,191 +417,41 @@
         }
     }
 
-    // ── Dashboard screenshots replacement ──────────────────────────────────
+    // Suppress click popup on timeline bar — keep hover popup (task/project/duration) instead.
+    // Intercepts Vue 2 reactive setter on clickPopup.show so it never becomes true.
+    function patchTimelineClick() {
+        var p = window.location.pathname;
+        var isTimeline = p === '/dashboard' || p === '/dashboard/timeline' || p === '/timeline' || p === '/';
+        if (!isTimeline) return;
 
-    var _scPatchedKey = null;
-    var DN_MODAL_ID   = 'dn-sc-modal';
-    var _dashIntervals = [];
-    var _dashModalIdx  = 0;
+        var appEl = document.getElementById('app');
+        if (!appEl || !appEl.__vue__) return;
 
-    function dnNormTs(s) {
-        s = String(s || '').replace(' ', 'T');
-        if (!/Z|[+-]\d{2}:\d{2}$/.test(s)) s += 'Z';
-        return s;
-    }
-
-    function dnEscHtml(str) {
-        return String(str || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-    }
-
-    function dnFetchImage(img, path) {
-        var token = localStorage.getItem('access_token');
-        if (!token) return;
-        fetch(path, { headers: { 'Authorization': 'Bearer ' + token } })
-            .then(function (r) { if (!r.ok) throw new Error('HTTP ' + r.status); return r.blob(); })
-            .then(function (blob) {
-                if (img.dataset.blobUrl) URL.revokeObjectURL(img.dataset.blobUrl);
-                var url = URL.createObjectURL(blob);
-                img.dataset.blobUrl = url;
-                img.src = url;
-            })
-            .catch(function () { img.style.display = 'none'; });
-    }
-
-    function isOnDashboardPage() {
-        return /^\/dashboard/.test(window.location.pathname) || window.location.pathname === '/timeline';
-    }
-
-    function patchDashboardScreenshots() {
-        if (!isOnDashboardPage()) { _scPatchedKey = null; return; }
-
-        var el = document.querySelector('.screenshots');
-        if (!el) { _scPatchedKey = null; return; }
-
-        var vm = el.__vue__;
-        if (!vm || !vm.intervals || !vm.user) return;
-
-        var intervals = vm.intervals[vm.user.id] || [];
-        var key = JSON.stringify(intervals.map(function (iv) { return iv.id; }));
-        if (key === _scPatchedKey) return;
-        _scPatchedKey = key;
-
-        // Hide native checkbox-group, keep the title
-        var cbGroup = el.querySelector('[class*="checkbox-group"]') ||
-                      el.querySelector('.at-checkbox-group') ||
-                      (el.children[1] || null);
-        if (cbGroup) cbGroup.style.display = 'none';
-
-        // Remove stale grid, revoking thumbnail blob URLs to prevent memory leaks
-        var old = document.getElementById('dn-sc-grid');
-        if (old) {
-            var oldImgs = old.querySelectorAll('img[data-blob-url]');
-            for (var ri = 0; ri < oldImgs.length; ri++) URL.revokeObjectURL(oldImgs[ri].dataset.blobUrl);
-            old.parentNode.removeChild(old);
-        }
-
-        if (!intervals.length) return;
-
-        _dashIntervals = intervals.slice();
-
-        var tz = 'UTC';
-        var grid = document.createElement('div');
-        grid.id = 'dn-sc-grid';
-
-        intervals.forEach(function (iv, idx) {
-            if (!iv || !iv.id) return;
-            var taskName    = (iv.task && iv.task.task_name) || (iv.task_name) || '—';
-            var projectName = iv.project_name || (iv.task && iv.task.project && iv.task.project.name) || '';
-            var timeStr = '';
-            if (iv.start_at) {
-                try {
-                    timeStr = new Intl.DateTimeFormat('en-US', {
-                        timeZone: tz, hour: '2-digit', minute: '2-digit', hour12: true,
-                    }).format(new Date(dnNormTs(iv.start_at)));
-                } catch (e) {}
+        function findByName(vm, name) {
+            if (vm.$options && (vm.$options.name === name || vm.$options._componentTag === name)) return vm;
+            var children = vm.$children || [];
+            for (var i = 0; i < children.length; i++) {
+                var r = findByName(children[i], name);
+                if (r) return r;
             }
-
-            var card = document.createElement('div');
-            card.className = 'dn-sc-card';
-            card.style.cursor = 'pointer';
-
-            var img = document.createElement('img');
-            img.className = 'dn-sc-img';
-            img.alt = '';
-            card.appendChild(img);
-            dnFetchImage(img, '/api/time-intervals/' + iv.id + '/thumb');
-
-            var info = document.createElement('div');
-            info.className = 'dn-sc-info';
-            info.innerHTML =
-                '<div class="dn-sc-task">' + dnEscHtml(taskName) + '</div>' +
-                (projectName ? '<div class="dn-sc-project">' + dnEscHtml(projectName) + '</div>' : '') +
-                (timeStr ? '<div class="dn-sc-time">' + timeStr + '</div>' : '');
-            card.appendChild(info);
-
-            card.addEventListener('click', (function (i) {
-                return function () { openDashModal(i); };
-            })(idx));
-
-            grid.appendChild(card);
-        });
-
-        el.appendChild(grid);
-    }
-
-    function buildDashModal() {
-        if (document.getElementById(DN_MODAL_ID)) return;
-        var modal = document.createElement('div');
-        modal.id = DN_MODAL_ID;
-        modal.innerHTML = [
-            '<div class="dn-modal__panel">',
-              '<div class="dn-modal__header">',
-                '<div>',
-                  '<div class="dn-modal__title" id="dn-modal-title"></div>',
-                  '<div class="dn-modal__meta"  id="dn-modal-meta"></div>',
-                '</div>',
-                '<button class="dn-modal__close" id="dn-modal-close">\xd7</button>',
-              '</div>',
-              '<div class="dn-modal__body">',
-                '<img class="dn-modal__img" id="dn-modal-img" src="" alt="">',
-              '</div>',
-              '<div class="dn-modal__footer">',
-                '<button class="dn-modal__btn" id="dn-modal-prev">&#8249; Prev</button>',
-                '<button class="dn-modal__btn" id="dn-modal-next">Next &#8250;</button>',
-              '</div>',
-            '</div>'
-        ].join('');
-        document.body.appendChild(modal);
-        modal.addEventListener('click', function (e) { if (e.target === modal) closeDashModal(); });
-        document.getElementById('dn-modal-close').addEventListener('click', closeDashModal);
-        document.getElementById('dn-modal-prev').addEventListener('click', function () { navigateDashModal(-1); });
-        document.getElementById('dn-modal-next').addEventListener('click', function () { navigateDashModal(1); });
-    }
-
-    function renderDashModalContent(idx) {
-        var iv = _dashIntervals[idx];
-        if (!iv) return;
-        var tz = 'UTC';
-        var timeStr = '';
-        if (iv.start_at) {
-            try {
-                timeStr = new Intl.DateTimeFormat('en-US', {
-                    timeZone: tz, hour: 'numeric', minute: '2-digit', hour12: true,
-                }).format(new Date(dnNormTs(iv.start_at)));
-            } catch (e) {}
+            return null;
         }
-        var taskName    = (iv.task && iv.task.task_name) || iv.task_name || '—';
-        var projectName = iv.project_name || (iv.task && iv.task.project && iv.task.project.name) || '';
-        document.getElementById('dn-modal-title').textContent = taskName;
-        document.getElementById('dn-modal-meta').textContent  = [projectName, timeStr].filter(Boolean).join(' · ');
 
-        var modalImg = document.getElementById('dn-modal-img');
-        if (modalImg.dataset.blobUrl) { URL.revokeObjectURL(modalImg.dataset.blobUrl); modalImg.dataset.blobUrl = ''; }
-        modalImg.src = '';
-        modalImg.style.display = '';
-        dnFetchImage(modalImg, '/api/time-intervals/' + iv.id + '/screenshot');
+        var comp = findByName(appEl.__vue__, 'TimelineDayGraph');
+        if (!comp || comp.__dnClickPatched) return;
+        comp.__dnClickPatched = true;
 
-        document.getElementById('dn-modal-prev').disabled = (idx <= 0);
-        document.getElementById('dn-modal-next').disabled = (idx >= _dashIntervals.length - 1);
-    }
+        var cp = comp.clickPopup;
+        if (!cp) return;
+        var desc = Object.getOwnPropertyDescriptor(cp, 'show');
+        if (!desc || !desc.set) return;
 
-    function openDashModal(idx) {
-        buildDashModal();
-        _dashModalIdx = Math.max(0, Math.min(_dashIntervals.length - 1, idx));
-        renderDashModalContent(_dashModalIdx);
-        document.getElementById(DN_MODAL_ID).style.display = 'flex';
-    }
-
-    function closeDashModal() {
-        var modal = document.getElementById(DN_MODAL_ID);
-        if (modal) modal.style.display = 'none';
-    }
-
-    function navigateDashModal(delta) {
-        var newIdx = Math.max(0, Math.min(_dashIntervals.length - 1, _dashModalIdx + delta));
-        if (newIdx === _dashModalIdx) return;
-        _dashModalIdx = newIdx;
-        renderDashModalContent(_dashModalIdx);
+        Object.defineProperty(cp, 'show', {
+            get: desc.get,
+            set: function() { desc.set(false); },
+            configurable: true,
+            enumerable: true
+        });
     }
 
     function tick() {
@@ -629,19 +465,12 @@
         injectTasksHint();
         limitTaskAvatars();
         cleanupDropdowns();
-        patchDashboardScreenshots();
+        patchTimelineClick();
     }
 
     function init() {
         localStorage.setItem('dashboard.tab', 'timeline');
         injectCSS();
-        document.addEventListener('keydown', function (e) {
-            var modal = document.getElementById(DN_MODAL_ID);
-            if (!modal || modal.style.display === 'none') return;
-            if (e.key === 'Escape')     closeDashModal();
-            if (e.key === 'ArrowLeft')  navigateDashModal(-1);
-            if (e.key === 'ArrowRight') navigateDashModal(1);
-        });
         var observer = new MutationObserver(tick);
         observer.observe(document.body, { childList: true, subtree: true });
     }
