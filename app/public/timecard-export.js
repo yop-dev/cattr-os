@@ -94,18 +94,13 @@
             .replace(/>/g, '&gt;').replace(/"/g, '&quot;');
     }
 
-    // Display timestamps as stored (UTC) without timezone conversion, matching
-    // native Cattr's Team page and screenshot modal behaviour. Revisit after
-    // the desktop agent is fixed to send real UTC (IDEA-002).
     function toLocalParts(isoUtc) {
         try {
             var d = new Date(normTs(isoUtc));
             var dateParts = new Intl.DateTimeFormat('en-US', {
-                timeZone: 'UTC',
                 month: '2-digit', day: '2-digit', year: 'numeric',
             }).formatToParts(d);
             var timeParts = new Intl.DateTimeFormat('en-US', {
-                timeZone: 'UTC',
                 hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: true,
             }).formatToParts(d);
             var dm = {}, tm = {};
@@ -119,10 +114,10 @@
         } catch (e) {
             var d2 = new Date(normTs(isoUtc));
             var pad = function (n) { return String(n).padStart(2, '0'); };
-            var h = d2.getUTCHours(), ampm2 = h >= 12 ? 'PM' : 'AM', h12 = h % 12 || 12;
+            var h = d2.getHours(), ampm2 = h >= 12 ? 'PM' : 'AM', h12 = h % 12 || 12;
             return {
-                dateStr: pad(d2.getUTCMonth() + 1) + '/' + pad(d2.getUTCDate()) + '/' + d2.getUTCFullYear(),
-                timeStr: pad(h12) + ':' + pad(d2.getUTCMinutes()) + ':' + pad(d2.getUTCSeconds()) + ampm2,
+                dateStr: pad(d2.getMonth() + 1) + '/' + pad(d2.getDate()) + '/' + d2.getFullYear(),
+                timeStr: pad(h12) + ':' + pad(d2.getMinutes()) + ':' + pad(d2.getSeconds()) + ampm2,
             };
         }
     }
@@ -220,7 +215,7 @@
             '<label class="dn-edit-label">End' +
             '<input class="dn-edit-input" id="dn-edit-end" type="datetime-local" value="' + esc(endVal) + '">' +
             '</label>' +
-            '<div class="dn-edit-tz">Times shown in UTC</div>' +
+            '<div class="dn-edit-tz">Times shown in your local timezone</div>' +
             '<div class="dn-edit-error" id="dn-edit-error" style="display:none"></div>' +
             '<div class="dn-edit-actions">' +
             '<button class="at-btn at-btn--small" id="dn-edit-cancel">Cancel</button>' +

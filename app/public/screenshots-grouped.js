@@ -29,7 +29,7 @@
     }
 
     function getCompanyTimezone() {
-        return 'UTC';
+        return Intl.DateTimeFormat().resolvedOptions().timeZone;
     }
 
     function normTs(s) {
