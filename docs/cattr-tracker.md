@@ -22,8 +22,9 @@ All planned changes and known bugs for the Cattr deployment. Customisations are 
 | C-016 | Hide Projects nav item for employees — keep visible for Admin/Manager/Auditor only | ✅ Done | Medium |
 | C-017 | Screenshots page — improve organization to show clear 5-minute grouped sequences (Clockify-style) | ✅ Done | Medium |
 | C-018 | Timecard export — Duration column: single-line format "HH:MM:SS · 10:00 AM → 10:05 AM" | ✅ Done | Low |
-| C-019 | Dashboard screenshots section — card UI matching Screenshots page + clickable lightbox modal | ✅ Done | Medium |
+| C-019 | Dashboard screenshots section — card UI matching Screenshots page + clickable lightbox modal | ❌ Reverted | Medium |
 | C-020 | Clockify-style timer bar with web↔desktop bidirectional sync (1-second polling) | ✅ Done | High |
+| C-021 | Dashboard redesign — single-column layout (bar → project/task totals); bar click shows task/project/duration only, no screenshot | ✅ Done | Medium |
 
 ---
 
@@ -682,7 +683,7 @@ New standalone IIFE `app/public/screenshots-grouped.js` injected via `app.blade.
 
 ### C-019 — Dashboard screenshots: card UI + clickable lightbox modal
 
-**Status:** ✅ Done — confirmed working 2026-05-08
+**Status:** ❌ Reverted — 2026-05-14 (superseded by C-021)
 **Priority:** Medium
 
 #### Requirement
@@ -914,6 +915,62 @@ New PHP controller classes cannot be added to the running container simply via `
 
 ---
 
+### C-021 — Dashboard redesign: single-column layout + suppress bar click popup
+
+**Status:** ✅ Done — 2026-05-14
+**Priority:** Medium
+
+#### Requirement
+
+Two related UX improvements to the Dashboard timeline page:
+
+1. **Layout:** Replace the two-column layout (left: project/task totals sidebar; right: bar + screenshots) with a single-column layout — calendar controls at top, full-width timeline bar below, project/task totals at the bottom. Remove the screenshots section entirely.
+
+2. **Bar interaction:** When hovering over a bar segment, the existing hover popup (task name, project name, duration) is sufficient and clear. Clicking should not open a different popup showing a screenshot thumbnail — it should do nothing (leave the hover popup visible).
+
+#### What was done
+
+**Frontend — `app/public/dashboard-nav.js`**
+
+**Layout (CSS injection):**
+
+Five CSS rules scoped to `body.dn-on-timeline` restack the three flex children of `.timeline` into a single column:
+
+```css
+body.dn-on-timeline .timeline { display: flex !important; flex-direction: column !important; gap: 16px; }
+body.dn-on-timeline .timeline .controls-row { order: 1; width: 100% !important; }
+body.dn-on-timeline .timeline .at-container.intervals { order: 2; width: 100% !important; max-width: none !important; }
+body.dn-on-timeline .timeline .at-container.sidebar { order: 3; width: 100% !important; max-width: none !important; }
+body.dn-on-timeline .screenshots { display: none !important; }
+```
+
+Also removed: the entire `patchDashboardScreenshots()` function (~185 lines) that implemented C-019's card grid and lightbox modal. This was the source of blank thumbnail cards (it bypassed `has_screenshot` and fetched thumbnails for all intervals).
+
+**Click popup suppression (`patchTimelineClick`):**
+
+`TimelineDayGraph.vue` uses two popups: `hoverPopup` (task name, project name, duration — shown on mouseover) and `clickPopup` (screenshot thumbnail + router-links — shown on mousedown). The v-show condition on hoverPopup is `hoverPopup.show && !clickPopup.show`, so as long as `clickPopup.show` stays false, the hover popup remains visible.
+
+`patchTimelineClick()` finds the `TimelineDayGraph` Vue component instance by traversing the Vue 2 component tree from `#app.__vue__`. It then intercepts the Vue 2 reactive setter on `comp.clickPopup.show` so that any attempt to set it to `true` silently sets it to `false` instead. Result: clicking a bar segment does nothing (the hover popup was already showing from mouseover and stays visible).
+
+The patch is applied per component instance (guarded by `comp.__dnClickPatched`) so it re-applies correctly after SPA navigation destroys and recreates the component.
+
+**Also removed (C-019 cleanup):** state vars `_scPatchedKey`, `DN_MODAL_ID`, `_dashIntervals`, `_dashModalIdx`; helpers `dnFetchImage`, `dnNormTs`, `dnEscHtml`, `isOnDashboardPage`; modal keydown event listener in `init()`.
+
+#### Files Modified
+
+| File | Change |
+|---|---|
+| `app/public/dashboard-nav.js` | Removed C-019 screenshot system; added layout CSS; added `patchTimelineClick()` |
+
+#### Test
+
+- [ ] Dashboard → single column: controls top, bar below, project/task totals at bottom
+- [ ] Screenshots section not visible anywhere on dashboard
+- [ ] Hover over bar segment → popup shows task name, project, duration
+- [ ] Click bar segment → no screenshot popup, no modal, hover popup stays visible
+
+---
+
 ## Deferred Ideas
 
 Ideas that were explored but parked — context preserved so they can be resumed.
@@ -973,11 +1030,11 @@ Neither option is clean enough. Option A requires distributing a patched `.exe` 
 | BUG-011 | Desktop timer resets to 00:00:00 when syncing from web — should anchor to server start_at | ✅ Fixed | Medium |
 | BUG-012 | Screenshots page shows wrong date / no screenshots — UTC vs local timezone day boundary mismatch | ✅ Fixed | Medium |
 | BUG-013 | Web-started session records only partial duration when stopped from desktop | ✅ Fixed | High |
-| BUG-014 | Screenshots page shows blank card for stop interval — has_screenshot always true for null screenshot_id | ⏳ Pending | Low |
+| BUG-014 | Screenshots page shows blank card for stop interval — has_screenshot always true for null screenshot_id | ✅ Fixed | Low |
 | BUG-015 | Screenshots page — projects filter has no effect | ✅ Fixed | Medium |
 | BUG-016 | Screenshots timestamps hardcoded to UTC — matches Dashboard timeline behavior | ✅ Fixed | Medium |
 | BUG-017 | Desktop task switching while timer is running is unreliable — hide all play buttons when tracking | ✅ Fixed | Medium |
-| BUG-018 | Blank screenshot thumbnails appear in desktop/web views — likely connected to BUG-014 stop interval issue | ⏳ Pending | Low |
+| BUG-018 | Blank screenshot thumbnails appear in desktop/web views — likely connected to BUG-014 stop interval issue | ✅ Fixed | Low |
 | BUG-019 | Web-owned sessions: web stop logs full interval overlapping desktop gap+periodic — double-counting if web succeeds, silent loss if rate-limited | ✅ Fixed | High |
 | BUG-020 | EAUTH502 Too Many Attempts — tracking poll routes rate-limited at 120 req/min; 1-second polling from web + desktop exceeds budget | ✅ Fixed | High |
 
@@ -1636,68 +1693,57 @@ var bounds = [dateStr + ' 00:00:00', dateStr + ' 23:59:59'];
 
 ### BUG-014 — Screenshots page shows blank card for stop interval
 
-**Status:** ⏳ Pending
+**Status:** ✅ Fixed — 2026-05-14
 **Discovered:** 2026-05-13
-**Severity:** Low — cosmetic; one extra card appears after web-started sessions stopped from desktop
+**Severity:** Low — cosmetic
 
 #### Symptom
 
-After a web-started session is stopped from the desktop, the Screenshots page shows an extra card for the stop interval (typically ~53 seconds). The card thumbnail area is blank white — no screenshot image renders. The user expected 2 screenshot cards for a ~7-minute session but consistently got 3, with the third appearing right at the stop moment.
+After a web-started session is stopped from the desktop, the Screenshots page showed an extra blank card for the stop/tail interval (typically ~53 seconds). The card thumbnail area was blank white — no screenshot image rendered.
 
 #### Root Cause
 
-Upstream Cattr bug: the `has_screenshot` model accessor on `TimeInterval` short-circuits incorrectly when `screenshot_id` is `NULL`:
+Upstream Cattr bug: the `has_screenshot` model accessor on `TimeInterval` short-circuits on `!$value` where `$value` is `screenshot_id`. Since `screenshot_id` is always `NULL` in our setup (`sus_files` table is unused; screenshots stored as `sha256(interval.id).jpg` on disk), `!null = true` caused every interval to return `has_screenshot=true` without ever checking the disk.
+
+Disk investigation confirmed: stop/tail intervals (e.g. ids 128, 136) have **no file on disk** — the capture cycle simply didn't fire during their short window. The thumbnail endpoint returns 404 for these, but the Screenshots page was rendering a card for them regardless because the API said `has_screenshot=true`.
+
+#### Previous client-side fix attempts (all ineffective)
+
+Four client-side workarounds were layered into `screenshots-grouped.js` before the root cause was identified — none could work because the API itself was reporting incorrect data.
+
+#### Fix
+
+`app/app/Models/TimeInterval.php` — added `$attributes` parameter to the accessor closure and switched from `$value['id']` (screenshot_id, always null) to `$attributes['id']` (the interval's own primary key):
 
 ```php
-// Upstream accessor in TimeInterval model:
-'has_screenshot' => static fn ($value) => !$value || Storage::exists(...)
+// Before (broken): !null = true → always has_screenshot
+get: static fn ($value) => !$value || Storage::exists(
+    app(ScreenshotService::class)->getScreenshotPath($value['id'])
+)
+
+// After: checks actual disk path by interval ID
+get: static fn ($value, $attributes) => Storage::exists(
+    app(ScreenshotService::class)->getScreenshotPath($attributes['id'])
+)
 ```
 
-`screenshot_id` is `NULL` for all intervals in our setup (the `sus_files` table is empty; screenshots are stored on disk at `screenshots/sha256(interval.id).jpg` without any DB record). `!null = true`, so the `Storage::exists()` check is never reached. Every interval returns `has_screenshot=true` regardless of whether a file exists on disk.
+`ProductionScreenshotService::getScreenshotPath(int $id)` computes `sha256($id).jpg` — exactly the path on disk.
 
-The thumbnail endpoint (`IntervalController::showThumbnail`) does correctly check `Storage::exists(getThumbPath($interval))` and returns 404 if the file is missing. However, after four client-side fix attempts, the card continues to render — suggesting the thumbnail file for the stop interval likely **does exist on disk** (a screenshot was captured during the ~53-second window) and the endpoint returns HTTP 200 with a valid (but blank-looking) JPEG.
+#### Verification
 
-#### Fix Attempts (all deployed — none resolved)
-
-| # | Change | Why it didn't work |
-|---|---|---|
-| 1 | `renderGroups(_allIntervals)` — filter `_allIntervals` by `has_screenshot` before rendering | `has_screenshot=true` for all intervals; filter passes everything through |
-| 2 | `onError` callback in `apiFetchImage` — remove card on non-ok HTTP response | Doesn't fire if thumbnail endpoint returns 200 |
-| 3 | `setTimeout(3000)` sweep — remove cards where `!img.dataset.blobUrl` | Blob URL is set when fetch returns 200; check never triggers |
-| 4 | `blob.size < 100` guard + sweep also checks `img.style.display === 'none'` | If the JPEG is a real file (> 100 bytes), the size guard doesn't catch it |
-
-#### Current State of `screenshots-grouped.js`
-
-The file now has all four fixes layered in, none of which resolved the issue. The most recent state:
-
-- `apiFetchImage`: throws on `blob.size < 100` (catches 0-byte responses)
-- `buildThumbnailCard` `onError`: removes card + filters from `_allIntervals` on fetch failure
-- `renderGroups` sweep (3s): removes cards where `!img.dataset.blobUrl || img.style.display === 'none'`
-
-#### Next Steps
-
-1. **Verify whether the thumbnail file exists on disk** — exec into the container and check:
-   ```bash
-   docker exec cattr-server-app-1 sh -c "ls -la /app/storage/app/public/screenshots/thumbs/ | grep $(echo -n '<interval_id>' | sha256sum | cut -d' ' -f1)"
-   ```
-   If the file exists and has non-zero size, the screenshot is real and the card is technically correct.
-
-2. **If file exists, consider filtering by duration** — hide intervals shorter than a threshold (e.g. 60 seconds) from the Screenshots page. Stop intervals are characteristically short. Risk: could hide legitimate short intervals in edge cases.
-
-3. **If file is 0 bytes or missing but endpoint returns 200** — investigate why `IntervalController::showThumbnail` is not returning 404. May need to add a `Content-Length` or content-type check in `apiFetchImage`.
-
-4. **Server-side fix (cleanest)** — fix the `has_screenshot` accessor to bypass the null short-circuit:
-   ```php
-   'has_screenshot' => static fn ($value, $attrs) =>
-       Storage::exists('screenshots/' . hash('sha256', $attrs['id']) . '.jpg')
-   ```
-   This makes the accessor accurate for our setup (no `sus_files` records) and would cause the API to return `has_screenshot=false` for intervals with no file on disk — `buildThumbnailCard` would then render a "No screenshot" placeholder instead of attempting to load a thumbnail.
+| Interval | File on disk | has_screenshot before | has_screenshot after |
+|---|---|---|---|
+| id=128 (54s tail) | MISSING | true | **false** ✅ |
+| id=136 (3s short) | MISSING | true | **false** ✅ |
+| id=137 (127s) | EXISTS | true | **true** ✅ |
+| id=142 (277s) | EXISTS | true | **true** ✅ |
 
 #### Files Modified
 
 | File | Repo | Change |
 |---|---|---|
-| `app/public/screenshots-grouped.js` | cattr-server | Four incremental fix attempts layered in (see above); none resolved |
+| `app/app/Models/TimeInterval.php` | cattr-server | Fixed `hasScreenshot` accessor — use `$attributes['id']` for disk path |
+| `Dockerfile` | cattr-server | COPY TimeInterval.php into image |
 
 ---
 
@@ -1835,17 +1881,17 @@ Changed `v-if="!active"` to `v-if="!isAnyTracking"` in `Task.vue`. Added `isAnyT
 
 ### BUG-018 — Blank screenshot thumbnails in desktop and web views
 
-**Status:** ⏳ Pending
+**Status:** ✅ Fixed — 2026-05-14 (resolved by BUG-014 fix)
 **Discovered:** 2026-05-14 (during BUG-011 testing)
-**Severity:** Low — cosmetic; blank white cards appear where a screenshot thumbnail should show
+**Severity:** Low — cosmetic
 
 #### Symptom
 
-During BUG-011 testing, blank screenshot thumbnails were observed in both the desktop app and the web Screenshots page. The cards render but the thumbnail image area is blank white. Likely connected to BUG-014 (stop interval producing a near-blank screenshot captured during the ~53-second window when the screen may have been idle or minimized).
+Blank white thumbnail cards appeared in both the desktop app and the web Screenshots page during testing.
 
-#### Next Steps
+#### Resolution
 
-Investigate together with BUG-014 — check whether the blank thumbnails correspond to the stop interval or are a separate class of missing-file issue. See BUG-014 for the disk-check procedure.
+Root cause was the same broken `has_screenshot` accessor fixed in BUG-014. Intervals with no file on disk (stop/tail intervals) were being included in the Screenshots page because the API incorrectly reported `has_screenshot=true` for every interval. After the BUG-014 server-side fix, those intervals return `has_screenshot=false` and are excluded from the Screenshots page entirely — blank cards no longer appear.
 
 ---
 
