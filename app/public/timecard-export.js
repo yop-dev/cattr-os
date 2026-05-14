@@ -94,14 +94,16 @@
             .replace(/>/g, '&gt;').replace(/"/g, '&quot;');
     }
 
+    var _tz = window.__cattrTz || 'America/Los_Angeles';
+
     function toLocalParts(isoUtc) {
         try {
             var d = new Date(normTs(isoUtc));
             var dateParts = new Intl.DateTimeFormat('en-US', {
-                month: '2-digit', day: '2-digit', year: 'numeric',
+                timeZone: _tz, month: '2-digit', day: '2-digit', year: 'numeric',
             }).formatToParts(d);
             var timeParts = new Intl.DateTimeFormat('en-US', {
-                hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: true,
+                timeZone: _tz, hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: true,
             }).formatToParts(d);
             var dm = {}, tm = {};
             dateParts.forEach(function (p) { dm[p.type] = p.value; });
@@ -114,10 +116,15 @@
         } catch (e) {
             var d2 = new Date(normTs(isoUtc));
             var pad = function (n) { return String(n).padStart(2, '0'); };
-            var h = d2.getHours(), ampm2 = h >= 12 ? 'PM' : 'AM', h12 = h % 12 || 12;
+            var parts = new Intl.DateTimeFormat('en-US', {
+                timeZone: _tz, hour: '2-digit', minute: '2-digit', second: '2-digit',
+                month: '2-digit', day: '2-digit', year: 'numeric', hour12: true,
+            }).formatToParts(d2);
+            var fp = {};
+            parts.forEach(function (p) { fp[p.type] = p.value; });
             return {
-                dateStr: pad(d2.getMonth() + 1) + '/' + pad(d2.getDate()) + '/' + d2.getFullYear(),
-                timeStr: pad(h12) + ':' + pad(d2.getMinutes()) + ':' + pad(d2.getSeconds()) + ampm2,
+                dateStr: (fp.month||pad(d2.getMonth()+1)) + '/' + (fp.day||pad(d2.getDate())) + '/' + (fp.year||d2.getFullYear()),
+                timeStr: (fp.hour||'12') + ':' + (fp.minute||'00') + ':' + (fp.second||'00') + (fp.dayPeriod||'AM').replace(/\s/g,''),
             };
         }
     }
@@ -158,10 +165,17 @@
             var sameTask = last.task && iv.task && last.task.id === iv.task.id;
             var sameUser = last.user && iv.user && last.user.id === iv.user.id;
             var gap      = new Date(normTs(iv.start_at)) - new Date(normTs(last.end_at));
-            if (sameTask && sameUser && gap >= 0 && gap <= MERGE_GAP_MS) {
-                last.end_at      = iv.end_at;
-                last._lastId      = iv.id;
-                last._lastStartAt = iv.start_at;
+            // Merge contiguous (gap ≤ 30s) AND overlapping (gap < 0) intervals for the same task+user.
+            // Overlapping happens when the desktop pushes a gap interval and a tail interval that
+            // both start from the session anchor — take the latest end_at of the two.
+            if (sameTask && sameUser && gap <= MERGE_GAP_MS) {
+                var ivEnd   = new Date(normTs(iv.end_at));
+                var lastEnd = new Date(normTs(last.end_at));
+                if (ivEnd > lastEnd) {
+                    last.end_at      = iv.end_at;
+                    last._lastId      = iv.id;
+                    last._lastStartAt = iv.start_at;
+                }
                 last._subCount++;
             } else {
                 out.push(Object.assign({}, iv, {
@@ -655,10 +669,86 @@
         currentEnd     = null;
         currentUserIds = null;
         _jspdfQueue  = []; // discard any queued exports — page navigated away
+        stopNativePatchObserver();
         var c = document.getElementById(CONTAINER_ID);
         if (c) c.parentNode.removeChild(c);
         var native = document.querySelector('.time-use-report .at-container');
         if (native) native.style.display = '';
+    }
+
+    // ── Native summary row timezone patch ──────────────────────────────────
+    // The native Cattr Reports summary (project/task rows above .at-container)
+    // renders UTC time strings directly. We walk text nodes and re-format any
+    // "H:MM AM – H:MM PM" ranges we find using window.__cattrTz.
+
+    var _nativePatchObserver = null;
+
+    function parseUtcTimeOnDate(dateStr, h12, min, ampm) {
+        var h = parseInt(h12, 10);
+        if (ampm.toUpperCase() === 'PM' && h !== 12) h += 12;
+        if (ampm.toUpperCase() === 'AM' && h === 12) h = 0;
+        return new Date(dateStr + 'T' + String(h).padStart(2,'0') + ':' + min + ':00Z');
+    }
+
+    function fmtTzTime(d) {
+        try {
+            var parts = new Intl.DateTimeFormat('en-US', {
+                timeZone: _tz, hour: 'numeric', minute: '2-digit', hour12: true,
+            }).formatToParts(d);
+            var pm = {};
+            parts.forEach(function (p) { pm[p.type] = p.value; });
+            return pm.hour + ':' + pm.minute + ' ' + (pm.dayPeriod || '').replace(/\s/g, '');
+        } catch (e) { return ''; }
+    }
+
+    function patchNativeReportTimes() {
+        var page = document.querySelector('.time-use-report');
+        if (!page || !currentStart) return;
+        var dateStr = currentStart.slice(0, 10);
+        // Match "H:MM AM – H:MM PM" (en-dash or hyphen, optional spaces)
+        var re = /\b(1[0-2]|[1-9]):([0-5]\d)\s*(AM|PM)\s*[–\-]\s*(1[0-2]|[1-9]):([0-5]\d)\s*(AM|PM)\b/gi;
+        var walker = document.createTreeWalker(page, NodeFilter.SHOW_TEXT, {
+            acceptNode: function (n) {
+                // Skip our own injected container and already-patched nodes
+                if (n.parentElement.closest('#' + CONTAINER_ID)) return NodeFilter.FILTER_REJECT;
+                if (n.parentElement.dataset.dnTzPatched) return NodeFilter.FILTER_REJECT;
+                return re.test(n.textContent) ? NodeFilter.FILTER_ACCEPT : NodeFilter.FILTER_SKIP;
+            }
+        }, false);
+        var nodes = [];
+        var n;
+        while ((n = walker.nextNode())) nodes.push(n);
+        nodes.forEach(function (node) {
+            re.lastIndex = 0;
+            var replaced = node.textContent.replace(re, function (_, h1, m1, ap1, h2, m2, ap2) {
+                var start = parseUtcTimeOnDate(dateStr, h1, m1, ap1);
+                var end   = parseUtcTimeOnDate(dateStr, h2, m2, ap2);
+                var s = fmtTzTime(start), e = fmtTzTime(end);
+                return (s && e) ? s + ' – ' + e : _;
+            });
+            if (replaced !== node.textContent) {
+                node.textContent = replaced;
+                if (node.parentElement) node.parentElement.dataset.dnTzPatched = '1';
+            }
+        });
+    }
+
+    function startNativePatchObserver() {
+        if (_nativePatchObserver) return;
+        var page = document.querySelector('.time-use-report');
+        if (!page) return;
+        _nativePatchObserver = new MutationObserver(function () {
+            patchNativeReportTimes();
+        });
+        _nativePatchObserver.observe(page, { childList: true, subtree: true });
+    }
+
+    function stopNativePatchObserver() {
+        if (_nativePatchObserver) { _nativePatchObserver.disconnect(); _nativePatchObserver = null; }
+        // Clear patched markers so re-entry re-patches correctly
+        document.querySelectorAll('[data-dn-tz-patched]').forEach(function (el) {
+            delete el.dataset.dnTzPatched;
+        });
     }
 
     // ── tick ───────────────────────────────────────────────────────────────
@@ -671,6 +761,8 @@
 
         injectCSS();
         injectContainer();
+        startNativePatchObserver();
+        patchNativeReportTimes();
         cleanupUserDropdown();
 
         if (_fetching) return; // already mid-fetch — do nothing
