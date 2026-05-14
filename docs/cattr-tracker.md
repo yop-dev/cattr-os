@@ -1037,6 +1037,9 @@ Neither option is clean enough. Option A requires distributing a patched `.exe` 
 | BUG-018 | Blank screenshot thumbnails appear in desktop/web views — likely connected to BUG-014 stop interval issue | ✅ Fixed | Low |
 | BUG-019 | Web-owned sessions: web stop logs full interval overlapping desktop gap+periodic — double-counting if web succeeds, silent loss if rate-limited | ✅ Fixed | High |
 | BUG-020 | EAUTH502 Too Many Attempts — tracking poll routes rate-limited at 120 req/min; 1-second polling from web + desktop exceeds budget | ✅ Fixed | High |
+| BUG-021 | Screenshots page shows only 1 of N screenshots — `_index` calls `paginate()` without args, defaults to 15 rows; `perPage: 1000` in request body is silently ignored | ✅ Fixed | Medium |
+| BUG-022 | Dashboard sidebar task times display in UTC instead of local timezone — `fmtUTC()` used `getUTCHours/getUTCMinutes` | ✅ Fixed | Medium |
+| BUG-023 | Desktop auto-start timer on task creation silently no-ops — Sequelize model UUID id doesn't survive Electron structured-clone IPC serialization | ✅ Fixed | High |
 
 ---
 
@@ -1991,3 +1994,104 @@ Applies to: `tracking/current`, `tracking/start`, `tracking/stop`.
 
 - [x] 6+ minute tracking session (web start, web stop) → no EAUTH502 in browser console ✅
 - [x] Desktop polling active simultaneously → no 429 errors in desktop logs ✅
+
+---
+
+### BUG-021 — Screenshots page shows only 1 of N screenshots for a multi-interval session
+
+**Status:** ✅ Fixed — 2026-05-14
+**Discovered:** 2026-05-14
+**Severity:** Medium — Screenshots page appeared to show only 1 screenshot per tracking session even when multiple intervals (and screenshots) existed
+
+#### Symptom
+
+An 11-minute tracking session on "5-14-26 Task" produced 5 intervals (IDs 143–147) and 5 screenshot files on disk. The Screenshots page showed only 1 card (interval 143). All 5 intervals existed in the DB with `deleted_at=NULL` and all 5 thumbnail endpoints returned HTTP 200.
+
+#### Root Cause
+
+`ItemController._index()` calls `$itemsQuery->paginate()` with **no arguments**, which defaults to Laravel's built-in page size of **15 rows**. Our `screenshots-grouped.js` `fetchIntervals()` call includes `perPage: 1000` in the JSON body, but `paginate()` never reads the request body for its page size — it only looks at query-string parameters or the model's `$perPage` property. The `perPage` key is listed in `QueryHelper::RESERVED_REQUEST_KEYWORDS`, which explicitly excludes it from WHERE clause processing, but nothing ever passes it to `paginate()`.
+
+Result: on any date with 15 or more intervals across all users, the API returns exactly 15 rows (page 1 of many). Intervals sorted after position 15 by `start_at` are silently dropped. Since interval 143 (the earliest of the 5) fell within the first 15, it appeared; 144–147 came after position 15 and were missing.
+
+The `X-Paginate: false` header is the documented escape hatch: when present, `_index()` calls `$itemsQuery->get()` instead of `$itemsQuery->paginate()`, returning all matching rows.
+
+#### Fix
+
+Added `'X-Paginate': 'false'` to the `apiFetch()` headers in `screenshots-grouped.js`:
+
+```javascript
+headers: {
+    'Content-Type':  'application/json',
+    'Authorization': 'Bearer ' + localStorage.getItem('access_token'),
+    'Accept':        'application/json',
+    'X-Paginate':    'false'   // ← added; bypasses paginate(), calls get() → no 15-row cap
+},
+```
+
+#### Files Modified
+
+| File | Repo | Change |
+|---|---|---|
+| `app/public/screenshots-grouped.js` | cattr-server | Added `X-Paginate: false` header to `apiFetch()` |
+
+#### Test
+
+- [ ] Screenshots page for a date with a multi-interval session → all screenshots shown, not just the first 15 intervals worth
+
+---
+
+### BUG-022 — Dashboard sidebar task times display in UTC instead of local timezone
+
+**Status:** ✅ Fixed
+**Discovered:** 2026-05-14 | **Fixed:** 2026-05-14
+**Severity:** Medium — all sidebar task time ranges off by UTC offset (7 hours for PDT)
+
+#### Root Cause
+
+`injectSidebarTimes()` in `dashboard-nav.js` formatted interval timestamps using `d.getUTCHours()` and `d.getUTCMinutes()`. API timestamps are stored as UTC, so the function was displaying raw UTC values — e.g. `1:00 PM` instead of `6:31 AM` for a session that happened at 06:31 AM PDT.
+
+The Reports page uses the correct local timezone, so the same session showed `06:31 AM` there and `1:38 PM` on the dashboard.
+
+#### Fix
+
+Changed `fmtUTC()` to use `d.getHours()` / `d.getMinutes()` (local timezone methods). The browser's local timezone is always the correct display timezone since Cattr is a single-company deployment.
+
+#### Files Modified
+
+| File | Repo | Change |
+|---|---|---|
+| `app/public/dashboard-nav.js` | cattr-server | `fmtUTC()`: `getUTCHours/getUTCMinutes` → `getHours/getMinutes` |
+
+---
+
+### BUG-023 — Desktop auto-start timer on task creation silently no-ops
+
+**Status:** ✅ Fixed
+**Discovered:** 2026-05-14 | **Fixed:** 2026-05-14
+**Severity:** High — task creation from desktop appeared to work but never started the timer
+
+#### Root Cause
+
+`tasks/create` IPC route returned `request.send(200, {task: createdTask})` with a raw Sequelize model instance. Electron's `event.sender.send()` uses the structured clone algorithm, which only copies own enumerable properties — Sequelize stores field values (including the UUID `id`) as prototype getters, not own properties. They do not survive serialization.
+
+In the renderer, `result.body.task.id` was `undefined`. `startTrack({ taskId: undefined })` hit the `typeof taskId !== 'string'` guard in `TaskTracker.start()` and fell into the "re-start last task" path, failing silently with no IPC call made.
+
+Other IPC routes (`tasks/sync`, `tasks/list`) use `purifyInstances()` which explicitly copies `instance.dataValues` — a plain object — avoiding this issue. `tasks/create` was the only route not using this pattern.
+
+#### Fix
+
+Changed the response to send `createdTask.dataValues` instead of the raw model:
+
+```javascript
+// Before
+return request.send(200, {task: createdTask});
+
+// After
+return request.send(200, {task: createdTask.dataValues});
+```
+
+#### Files Modified
+
+| File | Repo | Change |
+|---|---|---|
+| `app/src/routes/tasks.js` | desktop-application | `{task: createdTask}` → `{task: createdTask.dataValues}` |
