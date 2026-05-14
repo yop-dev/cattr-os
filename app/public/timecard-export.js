@@ -139,17 +139,65 @@
         return p(h) + ':' + p(m) + ':' + p(s);
     }
 
+    // Collapse adjacent intervals for the same task+user into one display row.
+    // Intervals separated by less than 30 seconds are considered contiguous
+    // (desktop capture cycle leaves a 1-second gap between chunks).
+    var MERGE_GAP_MS = 30 * 1000;
+
+    function mergeContiguousIntervals(rows) {
+        var sorted = rows.slice().sort(function (a, b) {
+            return new Date(normTs(a.start_at)) - new Date(normTs(b.start_at));
+        });
+        var out = [];
+        sorted.forEach(function (iv) {
+            if (!out.length) {
+                out.push(Object.assign({}, iv, {
+                    _subCount:    1,
+                    _firstEndAt:  iv.end_at,   // end_at of first sub-interval (kept when editing start)
+                    _lastId:      iv.id,        // id of last sub-interval
+                    _lastStartAt: iv.start_at,  // start_at of last sub-interval (kept when editing end)
+                }));
+                return;
+            }
+            var last     = out[out.length - 1];
+            var sameTask = last.task && iv.task && last.task.id === iv.task.id;
+            var sameUser = last.user && iv.user && last.user.id === iv.user.id;
+            var gap      = new Date(normTs(iv.start_at)) - new Date(normTs(last.end_at));
+            if (sameTask && sameUser && gap >= 0 && gap <= MERGE_GAP_MS) {
+                last.end_at      = iv.end_at;
+                last._lastId      = iv.id;
+                last._lastStartAt = iv.start_at;
+                last._subCount++;
+            } else {
+                out.push(Object.assign({}, iv, {
+                    _subCount:    1,
+                    _firstEndAt:  iv.end_at,
+                    _lastId:      iv.id,
+                    _lastStartAt: iv.start_at,
+                }));
+            }
+        });
+        return out.reverse(); // descending — most recent first
+    }
+
     function closeEditModal() {
         var m = document.getElementById(EDIT_MODAL_ID);
         if (m) m.parentNode.removeChild(m);
     }
 
-    function saveEdit(id, startIso, endIso) {
-        return apiFetch('time-intervals/edit', {
-            id: id,
-            start_at: startIso,
-            end_at: endIso,
-        });
+    function saveEdit(iv, startIso, endIso) {
+        if (iv._subCount > 1) {
+            // Merged row: edit first interval's start_at (keep its end_at),
+            // then edit last interval's end_at (keep its start_at).
+            return apiFetch('time-intervals/edit', {
+                id: iv.id, start_at: startIso, end_at: normTs(iv._firstEndAt),
+            }).then(function () {
+                return apiFetch('time-intervals/edit', {
+                    id: iv._lastId, start_at: normTs(iv._lastStartAt), end_at: endIso,
+                });
+            });
+        }
+        return apiFetch('time-intervals/edit', { id: iv.id, start_at: startIso, end_at: endIso });
     }
 
     function openEditModal(iv) {
@@ -209,7 +257,7 @@
             var startIso = new Date(startInput + ':00Z').toISOString();
             var endIso   = new Date(endInput   + ':00Z').toISOString();
 
-            saveEdit(iv.id, startIso, endIso).then(function () {
+            saveEdit(iv, startIso, endIso).then(function () {
                 closeEditModal();
                 currentStart = null;
                 renderTimecard();
@@ -283,9 +331,10 @@
             });
     }
 
-    function doExportPDF(intervals, dates) {
+    function doExportPDF(intervalsRaw, dates) {
         var jsPDF = window.jspdf && window.jspdf.jsPDF;
         if (!jsPDF) { window.print(); return; }
+        var intervals = mergeContiguousIntervals(intervalsRaw);
         var total = intervals.reduce(function (s, iv) {
             return s + durationSecs(iv.start_at, iv.end_at);
         }, 0);
@@ -337,7 +386,8 @@
 
     // ── render ─────────────────────────────────────────────────────────────
 
-    function buildContent(intervals, dates, truncated) {
+    function buildContent(intervalsRaw, dates, truncated) {
+        var intervals = mergeContiguousIntervals(intervalsRaw);
         var total = intervals.reduce(function (s, iv) {
             return s + durationSecs(iv.start_at, iv.end_at);
         }, 0);
