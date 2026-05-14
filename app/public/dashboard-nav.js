@@ -488,11 +488,24 @@
         }
 
         function fmtUTC(iso) {
-            var d = new Date(iso);
-            var h = d.getUTCHours(), m = d.getUTCMinutes();
-            var ampm = h >= 12 ? 'PM' : 'AM';
-            h = h % 12 || 12;
-            return h + ':' + (m < 10 ? '0' + m : m) + ' ' + ampm;
+            // Normalize: append Z if no timezone suffix so the date is parsed as UTC
+            var s = String(iso || '').replace(' ', 'T');
+            if (!/Z|[+-]\d{2}:\d{2}$/.test(s)) s += 'Z';
+            var tz = window.__cattrTz || 'America/Los_Angeles';
+            try {
+                var parts = new Intl.DateTimeFormat('en-US', {
+                    timeZone: tz, hour: 'numeric', minute: '2-digit', hour12: true,
+                }).formatToParts(new Date(s));
+                var tm = {};
+                parts.forEach(function (p) { tm[p.type] = p.value; });
+                return (tm.hour || '12') + ':' + (tm.minute || '00') + ' ' + (tm.dayPeriod || 'AM').replace(/\s/g, '');
+            } catch (e) {
+                var d = new Date(s);
+                var h = d.getHours(), m = d.getMinutes();
+                var ap = h >= 12 ? 'PM' : 'AM';
+                h = h % 12 || 12;
+                return h + ':' + (m < 10 ? '0' + m : m) + ' ' + ap;
+            }
         }
 
         // Task rows are li.task; task ID from .task__title-link href /tasks/view/{id}
