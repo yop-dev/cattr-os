@@ -1040,6 +1040,7 @@ Neither option is clean enough. Option A requires distributing a patched `.exe` 
 | BUG-021 | Screenshots page shows only 1 of N screenshots — `_index` calls `paginate()` without args, defaults to 15 rows; `perPage: 1000` in request body is silently ignored | ✅ Fixed | Medium |
 | BUG-022 | Dashboard sidebar task times display in UTC instead of local timezone — `fmtUTC()` used `getUTCHours/getUTCMinutes` | ✅ Fixed | Medium |
 | BUG-023 | Desktop auto-start timer on task creation silently no-ops — Sequelize model UUID id doesn't survive Electron structured-clone IPC serialization | ✅ Fixed | High |
+| BUG-024 | Interval timestamps stored in company local timezone (PDT) instead of UTC — create filter called `->setTimezone(company_tz)` causing Eloquent to format in PDT; native UI then double-converts PDT→PDT giving times 7h behind | ✅ Fixed | High |
 
 ---
 
@@ -2095,3 +2096,38 @@ return request.send(200, {task: createdTask.dataValues});
 | File | Repo | Change |
 |---|---|---|
 | `app/src/routes/tasks.js` | desktop-application | `{task: createdTask}` → `{task: createdTask.dataValues}` |
+
+---
+
+### BUG-024 — Interval timestamps stored in PDT instead of UTC
+
+**Status:** ✅ Fixed — 2026-05-14
+**Discovered:** 2026-05-14 (VPS testing — intervals showing 12:34 AM instead of 7:34 AM)
+**Severity:** High — every interval stored 7 hours behind actual start/end time; Reports showed wrong times
+
+#### Root Cause
+
+`IntervalController::create()` filter called `Carbon::parse($timestamp)->setTimezone("America/Los_Angeles")` before storing. Eloquent's `fromDateTime()` then called `$carbon->format('Y-m-d H:i:s')` which uses the Carbon's display timezone (PDT), storing `07:34` instead of `14:34` (UTC) in the DB.
+
+The native Cattr UI reads DB timestamps and converts them assuming UTC → local timezone. So `07:34 UTC` displayed as `07:34 - 7h = 00:34 PDT = 12:34 AM` — 7 hours behind actual time.
+
+The `edit()` method had already been fixed (commit 466c32c) to use `->utc()->toDateTimeString()`. The `create()` filter was never updated to match.
+
+#### Fix
+
+Changed `IntervalController::create()` and `uploadOfflineIntervals()` filters from:
+```php
+Carbon::parse($requestData['start_at'])->setTimezone($timezone)
+```
+to:
+```php
+Carbon::parse($requestData['start_at'])->utc()->toDateTimeString()
+```
+
+All intervals now stored in UTC. Matches the `edit()` method behavior.
+
+#### Files Modified
+
+| File | Repo | Change |
+|---|---|---|
+| `app/app/Http/Controllers/Api/IntervalController.php` | cattr-server | `create()` and `uploadOfflineIntervals()` filters: `->setTimezone($timezone)` → `->utc()->toDateTimeString()` |
