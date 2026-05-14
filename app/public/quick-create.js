@@ -19,6 +19,8 @@
     var session         = null;   // last session from server: {task_id, task_name, project_name, start_at, owner}
     var displayTimer    = null;   // setInterval handle for counting timer
     var pollTimer       = null;   // setInterval handle for polling
+    var _pollDestroyed  = false;
+    var _docClickHandler = null;
 
     // ─── Utilities ───────────────────────────────────────────────────────────
     function token() { return localStorage.getItem('access_token') || ''; }
@@ -41,6 +43,10 @@
         return String(str)
             .replace(/&/g, '&amp;').replace(/</g, '&lt;')
             .replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+    }
+
+    function safeColor(color) {
+        return /^#([0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/.test(String(color)) ? color : '#4fa6e0';
     }
 
     function getCurrentUserId() {
@@ -89,7 +95,7 @@
                         name:         t.task_name,
                         projectId:    t.project_id,
                         projectName:  proj ? proj.name  : '',
-                        projectColor: proj ? proj.color : '#4fa6e0',
+                        projectColor: proj ? safeColor(proj.color) : '#4fa6e0',
                     };
                 });
                 // If the input is focused while tasks were loading, refresh the dropdown now
@@ -232,7 +238,7 @@
             + ' data-name="' + escHtml(p.name) + '"'
             + ' data-color="' + escHtml(p.color) + '"'
             + ' style="padding:8px 12px;display:flex;align-items:center;gap:8px;cursor:pointer;">'
-            + '<span style="width:8px;height:8px;border-radius:50%;background:' + escHtml(p.color) + ';display:inline-block;flex-shrink:0;"></span>'
+            + '<span style="width:8px;height:8px;border-radius:50%;background:' + safeColor(p.color) + ';display:inline-block;flex-shrink:0;"></span>'
             + '<span style="font-size:13px;color:#222;">' + escHtml(p.name) + '</span>'
             + '</div>';
     }
@@ -312,7 +318,7 @@
         if (!sel) return;
         sel.style.display = name || !readOnly ? 'flex' : 'none';
         if (label) { label.textContent = name || 'Select project'; label.style.color = name ? '#222' : '#aaa'; }
-        if (dot)   { dot.style.background = color || '#d0d5dd'; dot.style.display = name ? 'inline-block' : 'none'; }
+        if (dot)   { dot.style.background = safeColor(color || '#d0d5dd'); dot.style.display = name ? 'inline-block' : 'none'; }
         sel.style.pointerEvents = readOnly ? 'none' : 'auto';
         sel.style.opacity       = readOnly ? '0.7' : '1';
     }
@@ -349,6 +355,7 @@
 
     function poll() {
         fetchCurrentSession().then(function(srv) {
+            if (_pollDestroyed) return;
             if (srv && !isRunning) {
                 showRunningState(srv, false);
             } else if (!srv && isRunning) {
@@ -542,32 +549,12 @@
         setLoading(true);
 
         var stopAt  = new Date().toISOString();
-        var owner   = session.owner;
         var taskId  = session.task_id;
         var startAt = session.start_at;
 
-        var stopPromise = Promise.resolve();
-
-        if (owner === 'web') {
-            var userId = getCurrentUserId();
-            var durationMs = Date.now() - new Date(startAt).getTime();
-            if (durationMs >= 1000 && userId) {
-                stopPromise = apiFetch('/api/time-intervals/create', {
-                    method: 'POST',
-                    body: JSON.stringify({
-                        task_id:       taskId,
-                        user_id:       userId,
-                        start_at:      startAt,
-                        end_at:        stopAt,
-                        activity_fill: 80,
-                    }),
-                }).then(function() {}).catch(function() {});
-            }
-        }
-
-        stopPromise.then(function() {
-            return apiFetch('/api/tracking/stop', { method: 'POST', body: '{}' });
-        }).then(function() {
+        // Desktop owns all interval logging (gap + periodic + tail).
+        // Web stop only signals the server to clear the session cache.
+        apiFetch('/api/tracking/stop', { method: 'POST', body: '{}' }).then(function() {
             showIdleState();
         }).catch(function() {
             showError('Error stopping tracker');
@@ -717,10 +704,11 @@
         });
 
         if (!docListenerAttached) {
-            document.addEventListener('click', function() {
+            _docClickHandler = function() {
                 closeSuggestions();
                 closeProjectDropdown();
-            });
+            };
+            document.addEventListener('click', _docClickHandler);
             docListenerAttached = true;
         }
 
@@ -733,6 +721,7 @@
                 else     showIdleState();
             });
 
+        _pollDestroyed = false;
         startPolling();
 
         setTimeout(function() {
@@ -743,10 +732,14 @@
 
     // ─── SPA Route Handling ───────────────────────────────────────────────────
     function cleanup() {
+        _pollDestroyed = true;
         stopPolling();
         stopTimerDisplay();
         if (docListenerAttached) {
-            document.removeEventListener('click', closeProjectDropdown);
+            if (_docClickHandler) {
+                document.removeEventListener('click', _docClickHandler);
+                _docClickHandler = null;
+            }
             docListenerAttached = false;
         }
         isRunning       = false;
