@@ -179,7 +179,8 @@
             headers: {
                 'Content-Type':  'application/json',
                 'Authorization': 'Bearer ' + localStorage.getItem('access_token'),
-                'Accept':        'application/json'
+                'Accept':        'application/json',
+                'X-Paginate':    'false'
             },
             body: JSON.stringify(body)
         }).then(function (r) {
