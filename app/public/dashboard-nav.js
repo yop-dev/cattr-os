@@ -38,6 +38,8 @@
             '.at-menu.navbar .at-menu__item:has(a[href="/calendar"]) { display: none !important; }',
             // Timeline page — hide only the Add Time + Export buttons (right flex), keep Calendar + Timezone visible
             'body.dn-on-timeline .controls-row .flex:last-child { display: none !important; }',
+            // Move date picker to the right
+            'body.dn-on-timeline .controls-row { justify-content: flex-end !important; }',
             // C-016: hide Projects nav for employees
             'body.dn-employee #dn-projects-link { display: none !important; }',
             // Reports direct link active state
@@ -52,6 +54,18 @@
             'body.dn-on-timeline .timeline .at-container.sidebar { order: 3; width: 100% !important; max-width: none !important; }',
             // Hide screenshots section entirely
             'body.dn-on-timeline .screenshots { display: none !important; }',
+            // Clockify-style task cards in dashboard sidebar
+            'body.dn-on-timeline ul.task-list { padding: 0 !important; margin: 0 0 12px 0 !important; }',
+            'body.dn-on-timeline li.task { background: #fff; border: 1px solid #e5e7eb; border-radius: 6px; padding: 10px 14px; margin-bottom: 4px; display: flex !important; align-items: center; gap: 0; }',
+            'body.dn-on-timeline li.task .task__progress { display: none !important; }',
+            'body.dn-on-timeline li.task > *:first-child { flex: 1 !important; min-width: 0; overflow: hidden; }',
+            'body.dn-on-timeline li.task .task__title { margin: 0; font-weight: normal; font-size: 14px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }',
+            'body.dn-on-timeline li.task .task__title-link { color: #111 !important; text-decoration: none !important; }',
+            '.dn-task-time { color: #9ca3af; font-size: 12px; white-space: nowrap; margin: 0 12px; flex-shrink: 0; }',
+            '.dn-task-dur { font-weight: 700; font-size: 14px; color: #374151; white-space: nowrap; flex-shrink: 0; }',
+            '.dn-play-btn { background: none; border: none; cursor: pointer; padding: 0; margin-left: 12px; color: #d1d5db; display: flex; align-items: center; flex-shrink: 0; line-height: 1; width: 28px; height: 28px; }',
+            '.dn-play-btn:hover { color: #22c55e; }',
+            'body.dn-session-active .dn-play-btn { display: none !important; }',
         ].join('\n');
         document.head.appendChild(style);
     }
@@ -417,41 +431,132 @@
         }
     }
 
-    // Suppress click popup on timeline bar — keep hover popup (task/project/duration) instead.
-    // Intercepts Vue 2 reactive setter on clickPopup.show so it never becomes true.
-    function patchTimelineClick() {
+    // Inject start–end time range into each sidebar task row on the dashboard.
+    function dnToken() { return localStorage.getItem('access_token') || ''; }
+
+    function startTaskFromCard(taskId) {
+        fetch('/api/tracking/start', {
+            method: 'POST',
+            headers: {
+                'Authorization': 'Bearer ' + dnToken(),
+                'Content-Type': 'application/json',
+                'Accept': 'application/json'
+            },
+            body: JSON.stringify({ task_id: parseInt(taskId, 10), start_at: new Date().toISOString(), owner: 'web' })
+        }).catch(function() {});
+        // quick-create bar poll picks up the new session within 1s automatically
+    }
+
+    // Show/hide play buttons based on whether the quick-create bar is in running state.
+    function updateSessionState() {
+        var btn = document.getElementById('qc-action-btn');
+        var active = btn && btn.textContent.trim() === 'Stop';
+        document.body.classList.toggle('dn-session-active', !!active);
+    }
+
+    // Reads intervals from the Vuex store, groups by task, and injects "H:MM AM – H:MM PM"
+    // before the worked-time element. Runs on every tick; guards via data-dn-times attribute.
+    function injectSidebarTimes() {
         var p = window.location.pathname;
         var isTimeline = p === '/dashboard' || p === '/dashboard/timeline' || p === '/timeline' || p === '/';
         if (!isTimeline) return;
 
         var appEl = document.getElementById('app');
         if (!appEl || !appEl.__vue__) return;
+        var store = appEl.__vue__.$store;
+        if (!store) return;
 
-        function findByName(vm, name) {
-            if (vm.$options && (vm.$options.name === name || vm.$options._componentTag === name)) return vm;
-            var children = vm.$children || [];
-            for (var i = 0; i < children.length; i++) {
-                var r = findByName(children[i], name);
-                if (r) return r;
+        var user = store.getters['user/user'];
+        if (!user) return;
+
+        var allIntervals = (store.state.dashboard || {}).intervals || {};
+        var userIntervals = allIntervals[user.id];
+        if (!userIntervals || !userIntervals.length) return;
+
+        // Group by task_id -> earliest start_at, latest end_at
+        var taskRanges = {};
+        for (var i = 0; i < userIntervals.length; i++) {
+            var iv = userIntervals[i];
+            if (!iv.task_id || !iv.start_at) continue;
+            var key = String(iv.task_id);
+            if (!taskRanges[key]) {
+                taskRanges[key] = { start: iv.start_at, end: iv.end_at || iv.start_at };
+            } else {
+                if (iv.start_at < taskRanges[key].start) taskRanges[key].start = iv.start_at;
+                if (iv.end_at && iv.end_at > taskRanges[key].end) taskRanges[key].end = iv.end_at;
             }
-            return null;
         }
 
-        var comp = findByName(appEl.__vue__, 'TimelineDayGraph');
-        if (!comp || comp.__dnClickPatched) return;
-        comp.__dnClickPatched = true;
+        function fmtUTC(iso) {
+            var d = new Date(iso);
+            var h = d.getHours(), m = d.getMinutes();
+            var ampm = h >= 12 ? 'PM' : 'AM';
+            h = h % 12 || 12;
+            return h + ':' + (m < 10 ? '0' + m : m) + ' ' + ampm;
+        }
 
-        var cp = comp.clickPopup;
-        if (!cp) return;
-        var desc = Object.getOwnPropertyDescriptor(cp, 'show');
-        if (!desc || !desc.set) return;
+        // Task rows are li.task; task ID from .task__title-link href /tasks/view/{id}
+        var taskEls = document.querySelectorAll('li.task');
+        for (var j = 0; j < taskEls.length; j++) {
+            var el = taskEls[j];
+            if (el.dataset.dnTimes) continue;
 
-        Object.defineProperty(cp, 'show', {
-            get: desc.get,
-            set: function() { desc.set(false); },
-            configurable: true,
-            enumerable: true
-        });
+            var link = el.querySelector('.task__title-link');
+            if (!link) continue;
+            var href = link.getAttribute('href') || '';
+            var hm = href.match(/\/tasks\/view\/(\d+)/);
+            if (!hm) continue;
+
+            var range = taskRanges[hm[1]];
+            if (!range) continue;
+
+            el.dataset.dnTimes = '1';
+
+            // Read native duration text before CSS hides .task__progress
+            var durationEl = el.querySelector('.task__duration');
+            var durText = durationEl ? durationEl.textContent.trim() : '';
+
+            // Append time range and duration as flex siblings after .task__title
+            var timeSpan = document.createElement('span');
+            timeSpan.className = 'dn-task-time';
+            timeSpan.textContent = fmtUTC(range.start) + ' – ' + fmtUTC(range.end);
+            el.appendChild(timeSpan);
+
+            var durSpan = document.createElement('span');
+            durSpan.className = 'dn-task-dur';
+            durSpan.textContent = durText;
+            el.appendChild(durSpan);
+
+            var playBtn = document.createElement('button');
+            playBtn.className = 'dn-play-btn';
+            playBtn.title = 'Start timer';
+            playBtn.innerHTML = '<svg viewBox="0 0 24 24" width="24" height="24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>';
+            (function(tid) {
+                playBtn.addEventListener('click', function(e) {
+                    e.stopPropagation();
+                    startTaskFromCard(tid);
+                });
+            }(hm[1]));
+            el.appendChild(playBtn);
+        }
+    }
+
+    // Suppress click popup on timeline bar — keep hover popup (task/project/duration) instead.
+    // Intercepts mousedown in capture phase on the intervals container before D3's handler fires.
+    function patchTimelineClick() {
+        var p = window.location.pathname;
+        var isTimeline = p === '/dashboard' || p === '/dashboard/timeline' || p === '/timeline' || p === '/';
+        if (!isTimeline) return;
+
+        var container = document.querySelector('.at-container.intervals');
+        if (!container || container.__dnClickPatched) return;
+        container.__dnClickPatched = true;
+
+        container.addEventListener('mousedown', function(e) {
+            if (e.target && e.target.tagName === 'rect') {
+                e.stopImmediatePropagation();
+            }
+        }, true);
     }
 
     function tick() {
@@ -465,6 +570,8 @@
         injectTasksHint();
         limitTaskAvatars();
         cleanupDropdowns();
+        updateSessionState();
+        injectSidebarTimes();
         patchTimelineClick();
     }
 

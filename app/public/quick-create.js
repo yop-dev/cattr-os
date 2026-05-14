@@ -724,10 +724,6 @@
         _pollDestroyed = false;
         startPolling();
 
-        setTimeout(function() {
-            var t = document.getElementById('qc-task-input');
-            if (t && !isRunning) t.focus();
-        }, 150);
     }
 
     // ─── SPA Route Handling ───────────────────────────────────────────────────
