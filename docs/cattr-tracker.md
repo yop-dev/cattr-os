@@ -1041,6 +1041,9 @@ Neither option is clean enough. Option A requires distributing a patched `.exe` 
 | BUG-022 | Dashboard sidebar task times display in UTC instead of local timezone — `fmtUTC()` used `getUTCHours/getUTCMinutes` | ✅ Fixed | Medium |
 | BUG-023 | Desktop auto-start timer on task creation silently no-ops — Sequelize model UUID id doesn't survive Electron structured-clone IPC serialization | ✅ Fixed | High |
 | BUG-024 | Interval timestamps stored in company local timezone (PDT) instead of UTC — create filter called `->setTimezone(company_tz)` causing Eloquent to format in PDT; native UI then double-converts PDT→PDT giving times 7h behind | ✅ Fixed | High |
+| BUG-025 | Desktop creates 3 intervals per session (two overlapping with identical `start_at` + one 2s tail) — display patched via `mergeContiguousIntervals`, root cause unknown | ⚠️ Display fixed | Medium |
+| BUG-026 | Edit time entry modal on Reports shows times in wrong timezone vs. the rest of the page | 🔍 Pending | Medium |
+| BUG-027 | Dashboard time bar shows some sessions ~7h off their actual position — likely old BUG-024 data or a `normTs` miss in bar rendering | 🔍 Pending | Low |
 
 ---
 
@@ -2131,3 +2134,93 @@ All intervals now stored in UTC. Matches the `edit()` method behavior.
 | File | Repo | Change |
 |---|---|---|
 | `app/app/Http/Controllers/Api/IntervalController.php` | cattr-server | `create()` and `uploadOfflineIntervals()` filters: `->setTimezone($timezone)` → `->utc()->toDateTimeString()` |
+
+---
+
+### BUG-025 — Desktop creates 3 intervals per session (two overlapping + one tail)
+
+**Status:** ⚠️ Display fixed, root cause pending
+**Discovered:** 2026-05-14 (desktop start/stop sessions showing doubled time in Reports)
+**Severity:** Medium — DB accumulates duplicate intervals; display is patched but data is dirty
+
+#### Symptom
+
+A ~1–2 minute desktop start/stop session creates 3 DB intervals instead of 1:
+- Two intervals with **identical `start_at`** (the session start time), slightly different `end_at` (1–2s apart)
+- One short **tail interval** (1–2s) starting at the end of the previous two
+
+**VPS example** (IDs 61–63, task 25, user 3, ~90s session):
+```
+id=61  16:19:41 → 16:21:05  (84s)
+id=62  16:19:41 → 16:21:07  (86s)   ← same start_at as 61
+id=63  16:21:07 → 16:21:09  (2s)    ← tail
+```
+
+**Local example** (IDs 161–163, task 44, user 6, ~61s session):
+```
+id=161  16:00:33 → 16:01:31  (58s)
+id=162  16:00:33 → 16:01:32  (59s)  ← same start_at as 161
+id=163  16:01:33 → 16:01:34  (1s)   ← tail
+```
+
+Both sessions: started and stopped from the desktop app. Admin user (`screenshots_interval = 3`, so `captureInterval = 180s`) — periodic capture cannot fire for a sub-3-minute session.
+
+#### Root Cause
+
+Unknown. The two identical-`start_at` intervals suggest `captureCurrentInterval()` is being called twice with the same `currentInterval.startedAt` before it is reset. Likely candidates:
+
+- A race between the `interval-capture` event handler (which calls `captureCurrentInterval` without `await`) and `stop()` firing at almost the same tick — though `captureInterval = 180` makes this seem impossible for admin
+- A second caller (`web-sync.js` external-stop path or the IPC stop route) also triggering `TaskTracker.stop()` before `setTrackerStatus(false)` is reached (the active-flag guard only fires after the async `captureCurrentInterval` completes)
+- Desktop app has a listener or IPC deduplication issue that causes the stop route to be entered twice
+
+#### Display Fix (applied)
+
+`mergeContiguousIntervals()` in `timecard-export.js` now merges overlapping intervals (`gap < 0`) as well as contiguous ones, taking the MAX `end_at`. Time Use Report shows one row per logical session. Edit button for merged rows works correctly.
+
+#### Next Step
+
+Enable Electron DevTools on a test session, watch console for `TaskTracker` log lines during stop, and count how many times `Executing tracker stop request` and `Capturing interval` appear.
+
+---
+
+### BUG-026 — Edit time entry modal on Reports shows times in wrong timezone
+
+**Status:** 🔍 Pending investigation
+**Discovered:** 2026-05-14
+**Severity:** Medium — manager edits intervals using the wrong reference time, can corrupt data
+
+#### Symptom
+
+The edit modal that opens when clicking the pencil icon on a time entry in Reports displays the start/end times in a different timezone than the rest of the Reports page. Page shows correct local (PDT) times; modal shows a different time offset.
+
+#### Root Cause
+
+Unknown. Likely the edit modal reads raw DB timestamps without applying the same `normTs()` + `Intl.DateTimeFormat` conversion used in the display layer, or uses `getHours/getMinutes` directly on a naively-parsed Date.
+
+#### Files to Investigate
+
+- `app/public/timecard-export.js` — `saveEdit()`, the modal HTML/input population logic, and wherever `start_at`/`end_at` are written into the modal `<input>` fields
+
+---
+
+### BUG-027 — Dashboard time bar shows incorrect position for some sessions (~7h offset)
+
+**Status:** 🔍 Pending investigation
+**Discovered:** 2026-05-14
+**Severity:** Low–Medium — bar position misleads manager when reviewing who was active when
+
+#### Symptom
+
+A session that actually ran at ~7 AM PDT appears on the dashboard timeline bar at ~2 PM (the UTC equivalent). Other sessions display correctly.
+
+#### Root Cause (hypothesis)
+
+Two possible sources:
+
+1. **Old BUG-024 data** — intervals stored before the BUG-024 fix have `start_at` in PDT (e.g. `07:34` instead of `14:34`). The bar renders them at face value as if they were UTC, placing them 7 hours early on the timeline. These can't be fixed at display time without knowing which rows are affected.
+
+2. **`dashboard-nav.js` display bug** — the bar rendering code may still have a path that parses timestamps without forcing UTC (missing `normTs()` / `Z` suffix), causing Chrome's `new Date("YYYY-MM-DD HH:MM:SS")` to treat the value as local time rather than UTC.
+
+#### Next Step
+
+Open Dashboard DevTools → inspect the `.at-container.intervals rect` elements for the affected session → check `data-start` / `data-end` or equivalent attributes to determine whether the bar is receiving the correct UTC timestamp or a shifted one.
