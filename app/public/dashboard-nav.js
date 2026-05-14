@@ -489,7 +489,7 @@
 
         function fmtUTC(iso) {
             var d = new Date(iso);
-            var h = d.getHours(), m = d.getMinutes();
+            var h = d.getUTCHours(), m = d.getUTCMinutes();
             var ampm = h >= 12 ? 'PM' : 'AM';
             h = h % 12 || 12;
             return h + ':' + (m < 10 ? '0' + m : m) + ' ' + ampm;
