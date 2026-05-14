@@ -12,6 +12,9 @@ COPY app/app/Models/User.php /app/app/Models/User.php
 # BUG-010: Fix 500 on task creation — firstOrCreate on pivot tried to INSERT User row → SQL constraint
 COPY app/app/Models/Task.php /app/app/Models/Task.php
 
+# BUG-014/018: Fix has_screenshot always returning true — use interval ID to check disk
+COPY app/app/Models/TimeInterval.php /app/app/Models/TimeInterval.php
+
 # C-001: Hide trash button in screenshot modal for non-admins (frontend injection)
 # C-002: Patch frontend ProjectPolicy.create() to allow employees (see patchProjectPolicy)
 COPY app/public/hide-employee-controls.js /app/public/hide-employee-controls.js
