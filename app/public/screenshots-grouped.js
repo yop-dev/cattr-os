@@ -29,7 +29,7 @@
     }
 
     function getCompanyTimezone() {
-        return window.__cattrTz || 'UTC';
+        return 'UTC';
     }
 
     function normTs(s) {
@@ -190,7 +190,8 @@
 
     // Fetch an image endpoint that requires Bearer auth; sets img.src to a blob URL.
     // Revokes the previous object URL if one was stored on img.dataset.blobUrl.
-    function apiFetchImage(img, path) {
+    // Optional onError callback fires when the fetch fails (e.g. 404 — no file on disk).
+    function apiFetchImage(img, path, onError) {
         fetch(path, {
             method: 'GET',
             headers: { 'Authorization': 'Bearer ' + localStorage.getItem('access_token') }
@@ -198,34 +199,15 @@
             if (!r.ok) throw new Error('HTTP ' + r.status);
             return r.blob();
         }).then(function (blob) {
+            if (blob.size < 100) throw new Error('empty blob');
             if (img.dataset.blobUrl) URL.revokeObjectURL(img.dataset.blobUrl);
             var url = URL.createObjectURL(blob);
             img.dataset.blobUrl = url;
             img.src = url;
         }).catch(function () {
             img.style.display = 'none';
+            if (onError) onError();
         });
-    }
-
-    function dayBoundsUtc(localDateStr, tz) {
-        function localToUtcStr(localIso) {
-            var guessMs = new Date(localIso + 'Z').getTime();
-            for (var i = 0; i < 2; i++) {
-                var localAtGuess = new Intl.DateTimeFormat('en-CA', {
-                    timeZone: tz,
-                    year: 'numeric', month: '2-digit', day: '2-digit',
-                    hour: '2-digit', minute: '2-digit', second: '2-digit',
-                    hour12: false, hourCycle: 'h23'  // h23 avoids '24:00:00' in some engines
-                }).format(new Date(guessMs)).replace(', ', 'T');
-                var localMs = new Date(localAtGuess + 'Z').getTime();
-                guessMs += new Date(localIso + 'Z').getTime() - localMs;
-            }
-            return new Date(guessMs).toISOString().slice(0, 19).replace('T', ' ');
-        }
-        return [
-            localToUtcStr(localDateStr + 'T00:00:00'),
-            localToUtcStr(localDateStr + 'T23:59:59')
-        ];
     }
 
     // ── Filter readers ─────────────────────────────────────────────────────
@@ -241,7 +223,11 @@
                 var d = inst.datepickerDateStart || inst.date || inst.selectedDate || inst.currentDate || inst.startDate;
                 if (d) {
                     if (d instanceof Date) {
-                        return new Intl.DateTimeFormat('en-CA', { timeZone: tz }).format(d);
+                        // AT-UI datepicker may store UTC midnight (new Date('YYYY-MM-DD')).
+                        // Formatting UTC midnight with a UTC-offset timezone shifts the date back
+                        // one day (e.g. May 13 00:00 UTC → May 12 in PDT). Use toISOString() to
+                        // get the UTC date string, which is always correct regardless of storage.
+                        return d.toISOString().slice(0, 10);
                     }
                     if (typeof d === 'string' && d.length >= 10) return d.slice(0, 10);
                 }
@@ -285,12 +271,15 @@
 
     // ── Data fetch ─────────────────────────────────────────────────────────
     function fetchIntervals(dateStr, userIds, projectIds) {
-        var tz     = getCompanyTimezone();
-        var bounds = dayBoundsUtc(dateStr, tz);
+        // Use UTC day boundaries (midnight to midnight) to match the Dashboard's
+        // native date grouping. Local-timezone conversion shifts the window by the
+        // UTC offset, causing late-night intervals (e.g. 11 PM PDT = 06:xx UTC next
+        // day) to fall under the wrong date.
+        var bounds = [dateStr + ' 00:00:00', dateStr + ' 23:59:59'];
 
         var where = { start_at: ['between', bounds] };
-        if (userIds.length   > 0) where.user_id    = ['=', userIds];
-        if (projectIds.length > 0) where.project_id = ['=', projectIds];
+        if (userIds.length > 0) where.user_id = ['=', userIds];
+        // project_id is not a column on time_intervals — filter client-side after fetch
 
         return apiFetch('/api/time-intervals/list', {
             with:    ['task', 'task.project', 'user'],
@@ -299,7 +288,13 @@
             perPage: 1000
         }).then(function (data) {
             if (!data || !Array.isArray(data.data)) throw new Error('Unexpected response shape');
-            return data.data;
+            var rows = data.data;
+            if (projectIds.length > 0) {
+                rows = rows.filter(function (iv) {
+                    return iv.task && iv.task.project && projectIds.indexOf(iv.task.project.id) !== -1;
+                });
+            }
+            return rows;
         });
     }
 
@@ -368,7 +363,11 @@
             var img = document.createElement('img');
             img.alt = taskName;
             imgWrap.appendChild(img);
-            apiFetchImage(img, '/api/time-intervals/' + iv.id + '/thumb');
+            apiFetchImage(img, '/api/time-intervals/' + iv.id + '/thumb', function () {
+                // File missing on disk despite has_screenshot=true — remove the card entirely.
+                if (card.parentNode) card.parentNode.removeChild(card);
+                _allIntervals = _allIntervals.filter(function (i) { return i.id !== iv.id; });
+            });
             card.addEventListener('click', function () { openModal(iv.id); });
         } else {
             var placeholder = document.createElement('div');
@@ -441,6 +440,34 @@
         groups.forEach(function (group) {
             container.appendChild(buildHourBlock(group.hour24, group.items));
         });
+
+        // Sweep: after thumbnails have had time to load, remove any cards whose
+        // thumbnail fetch failed (img hidden or blob URL never set). This catches
+        // intervals where has_screenshot=true from the API but the file is missing.
+        setTimeout(function () {
+            var c = document.getElementById(CONTAINER_ID);
+            if (!c) return;
+            c.querySelectorAll('.sc-card').forEach(function (card) {
+                var img = card.querySelector('img');
+                if (img && (!img.dataset.blobUrl || img.style.display === 'none')) {
+                    var id = parseInt(card.dataset.intervalId, 10);
+                    _allIntervals = _allIntervals.filter(function (i) { return i.id !== id; });
+                    if (card.parentNode) card.parentNode.removeChild(card);
+                }
+            });
+            // Remove any hour blocks that are now empty
+            c.querySelectorAll('.sc-block').forEach(function (block) {
+                if (!block.querySelector('.sc-card') && block.parentNode) {
+                    block.parentNode.removeChild(block);
+                }
+            });
+            if (!c.querySelector('.sc-block')) {
+                var empty = document.createElement('p');
+                empty.className   = 'sc-empty';
+                empty.textContent = 'No screenshots found for this date.';
+                c.appendChild(empty);
+            }
+        }, 3000);
     }
 
     // ── Render / Tick ──────────────────────────────────────────────────────
@@ -470,10 +497,8 @@
 
         fetchIntervals(dateStr, userIds || [], projectIds || [])
             .then(function (intervals) {
-                // _allIntervals: screenshot-bearing only (lightbox nav)
-                // renderGroups gets the full list so no-screenshot intervals render dimmed
                 _allIntervals = intervals.filter(function (iv) { return iv.has_screenshot; });
-                renderGroups(intervals);
+                renderGroups(_allIntervals);
             })
             .catch(function (e) {
                 // Reset keys so the same selection retries on the next tick

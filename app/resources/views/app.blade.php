@@ -17,6 +17,8 @@
         }
         /* Hide screenshot selection checkboxes on dashboard */
         .screenshot__checkbox { display: none !important; }
+        /* Hide timezone selector globally — company timezone is always America/Los_Angeles */
+        .controls-row .controls-row__item:last-child { display: none !important; }
     </style>
 </head>
 <body>

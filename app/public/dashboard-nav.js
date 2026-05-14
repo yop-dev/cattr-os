@@ -498,7 +498,7 @@
 
         _dashIntervals = intervals.slice();
 
-        var tz = window.__cattrTz || 'UTC';
+        var tz = 'UTC';
         var grid = document.createElement('div');
         grid.id = 'dn-sc-grid';
 
@@ -575,7 +575,7 @@
     function renderDashModalContent(idx) {
         var iv = _dashIntervals[idx];
         if (!iv) return;
-        var tz = window.__cattrTz || 'UTC';
+        var tz = 'UTC';
         var timeStr = '';
         if (iv.start_at) {
             try {
