@@ -475,13 +475,16 @@
             headers: {
                 'Authorization': 'Bearer ' + dnToken(),
                 'Content-Type': 'application/json',
-                'Accept': 'application/json',
-                'X-Paginate': 'false'
+                'Accept': 'application/json'
             },
             body: JSON.stringify({
-                start_from: today + ' 00:00:00',
-                end_to: today + ' 23:59:59',
-                user_ids: [userId]
+                'with': ['task', 'task.project', 'user'],
+                'where': {
+                    'start_at': ['between', [today + ' 00:00:00', today + ' 23:59:59']],
+                    'user_id': ['=', [userId]]
+                },
+                'orderBy': ['start_at', 'asc'],
+                'perPage': 2000
             })
         })
         .then(function(r) { return r.ok ? r.json() : null; })
