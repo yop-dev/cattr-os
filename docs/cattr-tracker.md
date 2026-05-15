@@ -1041,7 +1041,7 @@ Neither option is clean enough. Option A requires distributing a patched `.exe` 
 | BUG-022 | Dashboard sidebar task times display in UTC instead of local timezone — `fmtUTC()` used `getUTCHours/getUTCMinutes` | ✅ Fixed | Medium |
 | BUG-023 | Desktop auto-start timer on task creation silently no-ops — Sequelize model UUID id doesn't survive Electron structured-clone IPC serialization | ✅ Fixed | High |
 | BUG-024 | Interval timestamps stored in company local timezone (PDT) instead of UTC — create filter called `->setTimezone(company_tz)` causing Eloquent to format in PDT; native UI then double-converts PDT→PDT giving times 7h behind | ✅ Fixed | High |
-| BUG-025 | Desktop creates 3 intervals per session (two overlapping with identical `start_at` + one 2s tail) — display patched via `mergeContiguousIntervals`, root cause unknown | ⚠️ Display fixed | Medium |
+| BUG-025 | Desktop creates 3 intervals per session (two overlapping with identical `start_at` + one 2s tail) — display patched via `mergeContiguousIntervals`, root cause unknown | ✅ Fixed | Medium |
 | BUG-026 | Edit time entry modal on Reports shows times in wrong timezone vs. the rest of the page | 🔍 Pending | Medium |
 | BUG-027 | Dashboard time bar shows some sessions ~7h off their actual position — likely old BUG-024 data or a `normTs` miss in bar rendering | 🔍 Pending | Low |
 
@@ -2139,7 +2139,7 @@ All intervals now stored in UTC. Matches the `edit()` method behavior.
 
 ### BUG-025 — Desktop creates 3 intervals per session (two overlapping + one tail)
 
-**Status:** ⚠️ Display fixed, root cause pending
+**Status:** ✅ Fixed — 2026-05-15
 **Discovered:** 2026-05-14 (desktop start/stop sessions showing doubled time in Reports)
 **Severity:** Medium — DB accumulates duplicate intervals; display is patched but data is dirty
 
@@ -2177,9 +2177,15 @@ Unknown. The two identical-`start_at` intervals suggest `captureCurrentInterval(
 
 `mergeContiguousIntervals()` in `timecard-export.js` now merges overlapping intervals (`gap < 0`) as well as contiguous ones, taking the MAX `end_at`. Time Use Report shows one row per logical session. Edit button for merged rows works correctly.
 
-#### Next Step
+#### Fix Applied (2026-05-15)
 
-Enable Electron DevTools on a test session, watch console for `TaskTracker` log lines during stop, and count how many times `Executing tracker stop request` and `Capturing interval` appear.
+Three concurrency guards added to `C:\desktop-application\app\src\base\task-tracker.js`:
+
+1. **`_stopInProgress` mutex on `stop()`** — blocks concurrent entry; returns `false` immediately if already stopping; `finally` guarantees flag reset
+2. **Return-value check in `start()`'s task-switch path** — throws `UIError(409)` if the internal `stop()` call is blocked, preventing silent state corruption
+3. **`_captureInProgress` mutex on `captureCurrentInterval()`** — blocks concurrent captures from any path (including the floating `interval-capture` event handler); `finally` guarantees flag reset
+
+Commits: `0003998`, `ee2479f`, `ae5900d`, `b236548` (+ log-level fix) in `desktop-application` repo.
 
 ---
 
