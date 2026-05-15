@@ -29,6 +29,7 @@ All planned changes and known bugs for the Cattr deployment. Customisations are 
 | C-023 | Dashboard sidebar — per-interval rows matching Reports format (bold duration + gray time range stacked) | ✅ Done | Medium |
 | C-024 | Nav — remove Team link; rename Reports → "Team Reports" for admins | ✅ Done | Low |
 | C-025 | Desktop app reminder — static hint below quick-create bar to open desktop app before tracking | ✅ Done | Low |
+| C-026 | All users see all tasks (web timer bar + desktop) — TaskAccessScope override + status_id DB fix + quick-create all-user-ID fetch | ⚠️ Partial — BUG-037 blocks full completion | Medium |
 
 ---
 
@@ -1057,6 +1058,7 @@ Neither option is clean enough. Option A requires distributing a patched `.exe` 
 | BUG-034 | PDF export runs merge + jsPDF synchronously with no loading state — browser tab freezes on large date ranges | ✅ Fixed | Low |
 | BUG-035 | Edit modal timezone label showed server timezone instead of browser local timezone — misleading for admins | ✅ Fixed | Low |
 | BUG-036 | Desktop clock skew vs server causes future-dated start_at and cascading 422s — no detection or warning | ✅ Fixed | Low |
+| BUG-037 | Dashboard sidebar missing task cards for some users (desk proj, shop titan, create proj, test on desk) after C-026 task-visibility work — UserAccessScope revert restored admin2 but cards still absent | 🔴 Pending | High |
 
 ---
 
