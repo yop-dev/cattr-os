@@ -346,7 +346,7 @@
     // ─── Polling ──────────────────────────────────────────────────────────────
     function startPolling() {
         if (pollTimer) return;
-        pollTimer = setInterval(poll, 3000);
+        pollTimer = setInterval(poll, 1000);
     }
 
     function stopPolling() {
