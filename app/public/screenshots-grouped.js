@@ -29,7 +29,7 @@
     }
 
     function getCompanyTimezone() {
-        return Intl.DateTimeFormat().resolvedOptions().timeZone;
+        return window.__cattrTz || 'America/Los_Angeles';
     }
 
     function normTs(s) {
@@ -186,6 +186,22 @@
         }).then(function (r) {
             if (!r.ok) throw new Error('HTTP ' + r.status);
             return r.json();
+        });
+    }
+
+    function fetchCurrentSession() {
+        return apiFetch('/api/tracking/current', {})
+            .then(function (d) { return (d && d.data) ? d.data : null; })
+            .catch(function () { return null; });
+    }
+
+    function filterActiveSession(rows, activeSession, currentUserId) {
+        if (!activeSession || !activeSession.start_at) return rows;
+        var sessionStart = new Date(normTs(activeSession.start_at));
+        return rows.filter(function (iv) {
+            if (!iv.user || String(iv.user.id) !== String(currentUserId)) return true;
+            if (!iv.task || String(iv.task.id) !== String(activeSession.task_id)) return true;
+            return new Date(normTs(iv.start_at)) < sessionStart;
         });
     }
 
@@ -497,6 +513,12 @@
         container.innerHTML = '<p class="sc-loading">Loading…</p>';
 
         fetchIntervals(dateStr, userIds || [], projectIds || [])
+            .then(function (rows) {
+                return fetchCurrentSession().then(function (session) {
+                    var user = getCurrentUser();
+                    return filterActiveSession(rows, session, user ? user.id : null);
+                });
+            })
             .then(function (intervals) {
                 _allIntervals = intervals.filter(function (iv) { return iv.has_screenshot; });
                 renderGroups(_allIntervals);
