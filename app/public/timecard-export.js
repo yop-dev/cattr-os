@@ -189,6 +189,16 @@
         return out.reverse(); // descending — most recent first
     }
 
+    function filterActiveSession(rows, activeSession, currentUserId) {
+        if (!activeSession) return rows;
+        var sessionStart = new Date(normTs(activeSession.start_at));
+        return rows.filter(function (iv) {
+            if (!iv.user || String(iv.user.id) !== String(currentUserId)) return true;
+            if (!iv.task || String(iv.task.id) !== String(activeSession.task_id)) return true;
+            return new Date(normTs(iv.start_at)) < sessionStart;
+        });
+    }
+
     function closeEditModal() {
         var m = document.getElementById(EDIT_MODAL_ID);
         if (m) m.parentNode.removeChild(m);
@@ -520,10 +530,14 @@
 
         try {
             var intervals = await fetchIntervals(dates.start, dates.end, userIds);
+            var activeSession = await apiFetch('tracking/current', {})
+                .then(function (d) { return (d && d.data) ? d.data : null; })
+                .catch(function () { return null; });
+            var filteredRows = filterActiveSession(intervals.rows, activeSession, getCurrentUserId());
             container = document.getElementById(CONTAINER_ID);
             if (!container) return; // navigated away during fetch
             container.innerHTML = '';
-            container.appendChild(buildContent(intervals.rows, dates, intervals.truncated));
+            container.appendChild(buildContent(filteredRows, dates, intervals.truncated));
         } finally {
             _fetching = false;
         }
