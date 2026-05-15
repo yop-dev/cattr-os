@@ -60,5 +60,8 @@ COPY app/app/Http/Controllers/Api/IntervalController.php /app/app/Http/Controlle
 # C-020: Tracking session API for web↔desktop bidirectional timer sync
 COPY app/routes/api.php /app/routes/api.php
 
+# BUG-028: Fix Team page timeline bars showing at UTC time instead of user's local time
+COPY app/app/Reports/DashboardExport.php /app/app/Reports/DashboardExport.php
+
 HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
     CMD wget -qO- http://127.0.0.1/ > /dev/null || exit 1
