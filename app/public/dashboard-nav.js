@@ -5,6 +5,7 @@
 
     var _dnSidebarCache = null; // { date, ts, map } or null
     var _dnLastSessKey  = undefined; // task_id of last known session, for invalidation
+    var _trackingInFlight = false; // EC-012: double-click guard for tracking/start
 
     function injectCSS() {
         if (document.getElementById('dn-styles')) return;
@@ -503,17 +504,25 @@
         });
     }
 
-    function startTaskFromCard(taskId) {
-        fetch('/api/tracking/start', {
-            method: 'POST',
-            headers: {
-                'Authorization': 'Bearer ' + dnToken(),
-                'Content-Type': 'application/json',
-                'Accept': 'application/json'
-            },
-            body: JSON.stringify({ task_id: parseInt(taskId, 10), start_at: new Date().toISOString(), owner: 'web' })
-        }).catch(function() {});
-        // quick-create bar poll picks up the new session within 1s automatically
+    async function startTaskFromCard(taskId) {
+        if (_trackingInFlight) return;
+        _trackingInFlight = true;
+        try {
+            await fetch('/api/tracking/start', {
+                method: 'POST',
+                headers: {
+                    'Authorization': 'Bearer ' + dnToken(),
+                    'Content-Type': 'application/json',
+                    'Accept': 'application/json'
+                },
+                body: JSON.stringify({ task_id: parseInt(taskId, 10), start_at: new Date().toISOString(), owner: 'web' })
+            });
+            // quick-create bar poll picks up the new session within 1s automatically
+        } catch (e) {
+            // ignore network errors — same behaviour as before
+        } finally {
+            _trackingInFlight = false;
+        }
     }
 
     // Show/hide play buttons based on whether the quick-create bar is in running state.

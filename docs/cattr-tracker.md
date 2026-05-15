@@ -1048,6 +1048,14 @@ Neither option is clean enough. Option A requires distributing a patched `.exe` 
 | BUG-026 | Edit time entry modal on Reports shows times in wrong timezone vs. the rest of the page | ✅ Fixed | Medium |
 | BUG-027 | Dashboard time bar shows some sessions ~7h off their actual position | ✅ Fixed | Low |
 | BUG-028 | Team page timeline bars show at UTC time instead of user's local time — `DashboardExport::collection()` computed `from_midnight` without applying user timezone | ✅ Fixed | Medium |
+| BUG-029 | Deferred interval queue not sorted by start_at — out-of-order push causes valid intervals to 422 and be silently dropped | ✅ Fixed | Medium |
+| BUG-030 | Reports edit modal: merged row save makes two sequential PATCHs with no rollback — half-edited state on second-call failure | ✅ Fixed | Medium |
+| BUG-031 | Dashboard play button has no double-click protection — second click fires a second tracking/start request | ✅ Fixed | Low |
+| BUG-032 | Task creation modal has no double-submit guard — rapid clicks create duplicate tasks and overlapping sessions | ✅ Fixed | Low |
+| BUG-033 | onTaskCreated in ControlBar.vue swallows startTrack errors silently — timer never starts with no user feedback | ✅ Fixed | Low |
+| BUG-034 | PDF export runs merge + jsPDF synchronously with no loading state — browser tab freezes on large date ranges | ✅ Fixed | Low |
+| BUG-035 | Edit modal timezone label showed server timezone instead of browser local timezone — misleading for admins | ✅ Fixed | Low |
+| BUG-036 | Desktop clock skew vs server causes future-dated start_at and cascading 422s — no detection or warning | ✅ Fixed | Low |
 
 ---
 

@@ -235,17 +235,30 @@
         if (m) m.parentNode.removeChild(m);
     }
 
-    function saveEdit(iv, startIso, endIso) {
+    async function saveEdit(iv, startIso, endIso) {
         if (iv._subCount > 1) {
             // Merged row: edit first interval's start_at (keep its end_at),
             // then edit last interval's end_at (keep its start_at).
-            return apiFetch('time-intervals/edit', {
-                id: iv.id, start_at: startIso, end_at: normTs(iv._firstEndAt),
-            }).then(function () {
-                return apiFetch('time-intervals/edit', {
-                    id: iv._lastId, start_at: normTs(iv._lastStartAt), end_at: endIso,
+            // If the second call fails, revert the first to avoid half-edited data.
+            try {
+                await apiFetch('time-intervals/edit', {
+                    id: iv.id, start_at: startIso, end_at: normTs(iv._firstEndAt),
                 });
-            });
+                try {
+                    await apiFetch('time-intervals/edit', {
+                        id: iv._lastId, start_at: normTs(iv._lastStartAt), end_at: endIso,
+                    });
+                } catch (e2) {
+                    // Revert the first patch before re-throwing
+                    await apiFetch('time-intervals/edit', {
+                        id: iv.id, start_at: normTs(iv.start_at), end_at: normTs(iv._firstEndAt),
+                    });
+                    throw e2;
+                }
+            } catch (e) {
+                throw e;
+            }
+            return;
         }
         return apiFetch('time-intervals/edit', { id: iv.id, start_at: startIso, end_at: endIso });
     }
@@ -256,6 +269,7 @@
         var endVal   = toLocalInputVal(iv.end_at   || new Date().toISOString());
         var taskName = iv.task ? (iv.task.task_name || '—') : '—';
         var project  = iv.task && iv.task.project ? iv.task.project.name : '';
+        var browserTz = Intl.DateTimeFormat().resolvedOptions().timeZone;
 
         var overlay = document.createElement('div');
         overlay.id = EDIT_MODAL_ID;
@@ -270,7 +284,7 @@
             '<label class="dn-edit-label">End' +
             '<input class="dn-edit-input" id="dn-edit-end" type="datetime-local" value="' + esc(endVal) + '">' +
             '</label>' +
-            '<div class="dn-edit-tz">Times shown in company timezone (' + _tz + ')</div>' +
+            '<div class="dn-edit-tz">Times in your local timezone (' + esc(browserTz) + ')</div>' +
             '<div class="dn-edit-error" id="dn-edit-error" style="display:none"></div>' +
             '<div class="dn-edit-actions">' +
             '<button class="at-btn at-btn--small" id="dn-edit-cancel">Cancel</button>' +
@@ -359,7 +373,7 @@
 
     function loadAndExportPDF(intervals, dates, btn) {
         if (_jspdfLoading) return; // prevent double-download while CDN is loading
-        if (_jspdfLoaded) { doExportPDF(intervals, dates); return; }
+        if (_jspdfLoaded) { doExportPDF(intervals, dates, btn); return; }
         _jspdfLoading = true;
         if (btn) { btn.disabled = true; btn.textContent = 'Loading…'; }
         loadScript('/jspdf.umd.min.js')
@@ -370,7 +384,7 @@
                 _jspdfLoaded  = true;
                 _jspdfLoading = false;
                 if (btn) { btn.disabled = false; btn.textContent = 'Export PDF'; }
-                doExportPDF(intervals, dates);
+                doExportPDF(intervals, dates, btn);
                 _jspdfQueue.forEach(function (fn) { fn(); });
                 _jspdfQueue = [];
             })
@@ -381,57 +395,64 @@
             });
     }
 
-    function doExportPDF(intervalsRaw, dates) {
-        var jsPDF = window.jspdf && window.jspdf.jsPDF;
-        if (!jsPDF) { window.print(); return; }
-        var intervals = mergeContiguousIntervals(intervalsRaw);
-        var total = intervals.reduce(function (s, iv) {
-            return s + durationSecs(iv.start_at, iv.end_at);
-        }, 0);
+    async function doExportPDF(intervalsRaw, dates, btn) {
+        if (btn) { btn.disabled = true; btn.textContent = 'Generating…'; }
+        await new Promise(function (r) { setTimeout(r, 50); }); // yield to browser before heavy work
 
-        var doc = new jsPDF({ orientation: 'landscape', unit: 'pt', format: 'letter' });
+        try {
+            var jsPDF = window.jspdf && window.jspdf.jsPDF;
+            if (!jsPDF) { window.print(); return; }
+            var intervals = mergeContiguousIntervals(intervalsRaw);
+            var total = intervals.reduce(function (s, iv) {
+                return s + durationSecs(iv.start_at, iv.end_at);
+            }, 0);
 
-        doc.setFontSize(18);
-        doc.setFont('helvetica', 'bold');
-        doc.text('Detailed Report', 40, 50);
+            var doc = new jsPDF({ orientation: 'landscape', unit: 'pt', format: 'letter' });
 
-        doc.setFontSize(10);
-        doc.setFont('helvetica', 'normal');
-        doc.setTextColor(120, 120, 120);
-        doc.text(dates.start + ' – ' + dates.end, 40, 68);
+            doc.setFontSize(18);
+            doc.setFont('helvetica', 'bold');
+            doc.text('Detailed Report', 40, 50);
 
-        doc.setFontSize(11);
-        doc.setTextColor(0, 0, 0);
-        doc.text('Total: ' + fmtDuration(total), 40, 86);
+            doc.setFontSize(10);
+            doc.setFont('helvetica', 'normal');
+            doc.setTextColor(120, 120, 120);
+            doc.text(dates.start + ' – ' + dates.end, 40, 68);
 
-        var rows = intervals.map(function (iv) {
-            var secs     = durationSecs(iv.start_at, iv.end_at);
-            var sp       = toLocalParts(iv.start_at);
-            var ep       = toLocalParts(iv.end_at);
-            var taskName = iv.task ? (iv.task.task_name || '—') : '—';
-            var project  = iv.task && iv.task.project ? iv.task.project.name : '';
-            var userName = iv.user ? (iv.user.full_name || '') : '';
-            return [
-                sp.dateStr,
-                project ? taskName + '\n' + project : taskName,
-                fmtDuration(secs) + '\n' + sp.timeStr + ' - ' + ep.timeStr,
-                userName,
-            ];
-        });
+            doc.setFontSize(11);
+            doc.setTextColor(0, 0, 0);
+            doc.text('Total: ' + fmtDuration(total), 40, 86);
 
-        doc.autoTable({
-            startY: 100,
-            head: [['Date', 'Description', 'Duration', 'User']],
-            body: rows,
-            styles: { fontSize: 8, cellPadding: 6 },
-            headStyles: { fillColor: [240, 240, 240], textColor: [100, 100, 100], fontStyle: 'normal', fontSize: 7 },
-            columnStyles: { 0: { cellWidth: 75 }, 2: { cellWidth: 145 }, 3: { cellWidth: 120 } },
-        });
+            var rows = intervals.map(function (iv) {
+                var secs     = durationSecs(iv.start_at, iv.end_at);
+                var sp       = toLocalParts(iv.start_at);
+                var ep       = toLocalParts(iv.end_at);
+                var taskName = iv.task ? (iv.task.task_name || '—') : '—';
+                var project  = iv.task && iv.task.project ? iv.task.project.name : '';
+                var userName = iv.user ? (iv.user.full_name || '') : '';
+                return [
+                    sp.dateStr,
+                    project ? taskName + '\n' + project : taskName,
+                    fmtDuration(secs) + '\n' + sp.timeStr + ' - ' + ep.timeStr,
+                    userName,
+                ];
+            });
 
-        var filename = 'Cattr_Time_Report_Detailed_' +
-            dates.start.replace(/-/g, '_') + '-' +
-            dates.end.replace(/-/g, '_') + '.pdf';
-        doc.save(filename);
+            doc.autoTable({
+                startY: 100,
+                head: [['Date', 'Description', 'Duration', 'User']],
+                body: rows,
+                styles: { fontSize: 8, cellPadding: 6 },
+                headStyles: { fillColor: [240, 240, 240], textColor: [100, 100, 100], fontStyle: 'normal', fontSize: 7 },
+                columnStyles: { 0: { cellWidth: 75 }, 2: { cellWidth: 145 }, 3: { cellWidth: 120 } },
+            });
+
+            var filename = 'Cattr_Time_Report_Detailed_' +
+                dates.start.replace(/-/g, '_') + '-' +
+                dates.end.replace(/-/g, '_') + '.pdf';
+            doc.save(filename);
+        } finally {
+            if (btn) { btn.disabled = false; btn.textContent = 'Export PDF'; }
+        }
     }
 
     // ── render ─────────────────────────────────────────────────────────────
