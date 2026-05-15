@@ -1042,7 +1042,7 @@ Neither option is clean enough. Option A requires distributing a patched `.exe` 
 | BUG-023 | Desktop auto-start timer on task creation silently no-ops — Sequelize model UUID id doesn't survive Electron structured-clone IPC serialization | ✅ Fixed | High |
 | BUG-024 | Interval timestamps stored in company local timezone (PDT) instead of UTC — create filter called `->setTimezone(company_tz)` causing Eloquent to format in PDT; native UI then double-converts PDT→PDT giving times 7h behind | ✅ Fixed | High |
 | BUG-025 | Desktop creates 3 intervals per session (two overlapping with identical `start_at` + one 2s tail) — display patched via `mergeContiguousIntervals`, root cause unknown | ✅ Fixed | Medium |
-| BUG-026 | Edit time entry modal on Reports shows times in wrong timezone vs. the rest of the page | 🔍 Pending | Medium |
+| BUG-026 | Edit time entry modal on Reports shows times in wrong timezone vs. the rest of the page | ✅ Fixed | Medium |
 | BUG-027 | Dashboard time bar shows some sessions ~7h off their actual position — likely old BUG-024 data or a `normTs` miss in bar rendering | 🔍 Pending | Low |
 
 ---
@@ -2191,21 +2191,28 @@ Commits: `0003998`, `ee2479f`, `ae5900d`, `b236548` (+ log-level fix) in `deskto
 
 ### BUG-026 — Edit time entry modal on Reports shows times in wrong timezone
 
-**Status:** 🔍 Pending investigation
+**Status:** ✅ Fixed — 2026-05-15
 **Discovered:** 2026-05-14
 **Severity:** Medium — manager edits intervals using the wrong reference time, can corrupt data
 
 #### Symptom
 
-The edit modal that opens when clicking the pencil icon on a time entry in Reports displays the start/end times in a different timezone than the rest of the Reports page. Page shows correct local (PDT) times; modal shows a different time offset.
+The edit modal that opens when clicking the pencil icon on a time entry in Reports displayed start/end times in UTC while the Reports table showed local (PDT) times. The label said "Times shown in your local timezone" but it was lying. When a user edited a time and saved, the entered value was treated as UTC — so the saved time was offset by 7h from what they intended.
 
 #### Root Cause
 
-Unknown. Likely the edit modal reads raw DB timestamps without applying the same `normTs()` + `Intl.DateTimeFormat` conversion used in the display layer, or uses `getHours/getMinutes` directly on a naively-parsed Date.
+Regression in commit `b322d56` (2026-05-14): `toLocalParts()` was updated to show local timezone and the label was changed from "Times shown in UTC" to "Times shown in your local timezone" — but the modal input population (`normTs(...).slice(0,16)` = raw UTC) and the save handler (`new Date(input + ':00Z')` = treats input as UTC) were not updated. The two halves became inconsistent.
 
-#### Files to Investigate
+#### Fix Applied (2026-05-15)
 
-- `app/public/timecard-export.js` — `saveEdit()`, the modal HTML/input population logic, and wherever `start_at`/`end_at` are written into the modal `<input>` fields
+Two helpers added to `app/public/timecard-export.js`:
+
+- `toLocalInputVal(isoUtc)` — converts UTC API timestamp to `"YYYY-MM-DDTHH:MM"` in `_tz` for the `datetime-local` input
+- `localInputToUtcIso(localStr)` — converts user-entered local time back to UTC ISO for the API (single-iteration `Intl.DateTimeFormat` offset calculation)
+
+Modal label updated to show actual company timezone name (`_tz`). `toLocalInputVal` guards against invalid dates with try/catch. DST spring-forward edge case documented in comment.
+
+Commits: `46bc376`, `4a1ef80` in `cattr-server` repo.
 
 ---
 
