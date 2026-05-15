@@ -28,6 +28,7 @@ All planned changes and known bugs for the Cattr deployment. Customisations are 
 | C-022 | Hide in-progress intervals — suppress live desktop intervals from Reports, Screenshots, Dashboard sidebar until session stops | ✅ Done | High |
 | C-023 | Dashboard sidebar — per-interval rows matching Reports format (bold duration + gray time range stacked) | ✅ Done | Medium |
 | C-024 | Nav — remove Team link; rename Reports → "Team Reports" for admins | ✅ Done | Low |
+| C-025 | Desktop app reminder — static hint below quick-create bar to open desktop app before tracking | ✅ Done | Low |
 
 ---
 
