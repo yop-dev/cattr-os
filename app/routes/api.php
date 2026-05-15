@@ -365,18 +365,6 @@ Route::group([
         \Illuminate\Support\Facades\Cache::forget("tracking_session_{$userId}");
         return response()->json(['data' => null]);
     })->middleware('throttle:tracking-per-user');
-    $router->post('tracking/desktop-heartbeat', function (\Illuminate\Http\Request $request) {
-        $userId = optional($request->user())->id;
-        if (!$userId) return response()->json(['error' => 'Unauthenticated'], 401);
-        \Illuminate\Support\Facades\Cache::put("tracking_desktop_{$userId}", true, 90);
-        return response()->json(['data' => true]);
-    })->middleware('throttle:tracking-per-user');
-    $router->post('tracking/desktop-status', function (\Illuminate\Http\Request $request) {
-        $userId = optional($request->user())->id;
-        if (!$userId) return response()->json(['error' => 'Unauthenticated'], 401);
-        $running = \Illuminate\Support\Facades\Cache::has("tracking_desktop_{$userId}");
-        return response()->json(['data' => ['running' => $running]]);
-    })->middleware('throttle:tracking-per-user');
 });
 
 Route::any('(.*)', [Controller::class, 'universalRoute'])->name('universal_route');
