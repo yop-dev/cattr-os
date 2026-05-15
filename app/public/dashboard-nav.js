@@ -434,6 +434,12 @@
     // Inject start–end time range into each sidebar task row on the dashboard.
     function dnToken() { return localStorage.getItem('access_token') || ''; }
 
+    function dnNormTs(s) {
+        s = String(s || '').replace(' ', 'T');
+        if (!/Z|[+-]\d{2}:\d{2}$/.test(s)) s += 'Z';
+        return s;
+    }
+
     function startTaskFromCard(taskId) {
         fetch('/api/tracking/start', {
             method: 'POST',
@@ -472,6 +478,17 @@
         var allIntervals = (store.state.dashboard || {}).intervals || {};
         var userIntervals = allIntervals[user.id];
         if (!userIntervals || !userIntervals.length) return;
+
+        // Hide intervals belonging to the current active session (C-022)
+        var _sess = window.__cattrCurrentSession || null;
+        if (_sess) {
+            var _sessTaskId = String(_sess.task_id);
+            var _sessStart  = new Date(dnNormTs(_sess.start_at));
+            userIntervals = userIntervals.filter(function (iv) {
+                if (String(iv.task_id) !== _sessTaskId) return true;
+                return new Date(dnNormTs(iv.start_at)) < _sessStart;
+            });
+        }
 
         // Group by task_id -> earliest start_at, latest end_at
         var taskRanges = {};
