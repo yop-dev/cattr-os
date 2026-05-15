@@ -53,7 +53,7 @@
             // Dashboard layout: single column — bar on top, sidebar (totals) below
             'body.dn-on-timeline .timeline { display: flex !important; flex-direction: column !important; gap: 16px; }',
             'body.dn-on-timeline .timeline .controls-row { order: 1; width: 100% !important; }',
-            'body.dn-on-timeline .timeline .at-container.intervals { order: 2; width: 100% !important; max-width: none !important; }',
+            'body.dn-on-timeline .timeline .at-container.intervals { display: none !important; }',
             'body.dn-on-timeline .timeline .at-container.sidebar { order: 3; width: 100% !important; max-width: none !important; }',
             // Hide screenshots section entirely
             'body.dn-on-timeline .screenshots { display: none !important; }',
@@ -656,24 +656,6 @@
         }
     }
 
-    // Suppress click popup on timeline bar — keep hover popup (task/project/duration) instead.
-    // Intercepts mousedown in capture phase on the intervals container before D3's handler fires.
-    function patchTimelineClick() {
-        var p = window.location.pathname;
-        var isTimeline = p === '/dashboard' || p === '/dashboard/timeline' || p === '/timeline' || p === '/';
-        if (!isTimeline) return;
-
-        var container = document.querySelector('.at-container.intervals');
-        if (!container || container.__dnClickPatched) return;
-        container.__dnClickPatched = true;
-
-        container.addEventListener('mousedown', function(e) {
-            if (e.target && e.target.tagName === 'rect') {
-                e.stopImmediatePropagation();
-            }
-        }, true);
-    }
-
     function tick() {
         lockToTimeline();
         injectTeamLink();
@@ -687,7 +669,6 @@
         cleanupDropdowns();
         updateSessionState();
         injectSidebarTimes();
-        patchTimelineClick();
     }
 
     function init() {
