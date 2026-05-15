@@ -80,8 +80,7 @@
     }
 
     function fetchTasks() {
-        var body = { where: { active: 1 } };
-        return apiFetch('/api/tasks/list', { method: 'POST', body: JSON.stringify(body) })
+        return apiFetch('/api/tasks/list', { method: 'POST', body: '{}' })
             .then(function(r) { return r.json(); })
             .then(function(data) {
                 var rows = (data && data.data) ? data.data : [];
