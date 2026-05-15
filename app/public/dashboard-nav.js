@@ -1,7 +1,6 @@
 (function () {
     'use strict';
 
-    var TEAM_NAV_ID = 'dn-team-nav-item';
     var REPORTS_LINK_ID = 'dn-reports-link';
 
     var _dnSidebarCache = null; // { date, ts, map } or null
@@ -13,17 +12,7 @@
         style.id = 'dn-styles';
         style.textContent = [
             '.dashboard__routes { display: none !important; }',
-            // Team link active state
-            '.dn-team-link { position: relative; }',
-            '.dn-team-link.dn-active { color: #2e2ef9 !important; }',
-            '.dn-team-link::after { content: ""; position: absolute; bottom: -0.75em; left: 0; width: 100%; height: 3px; background: currentColor; display: none; }',
-            '.dn-team-link.dn-active::after { display: block; }',
-            // Suppress Dashboard active state when on Team page (AT-UI uses both at-menu__item--active on <li> and router-link-active on <a>)
-            'body.dn-on-team .at-menu__item:not(#dn-team-nav-item).at-menu__item--active > .at-menu__item-link { color: inherit !important; }',
-            'body.dn-on-team .at-menu__item:not(#dn-team-nav-item).at-menu__item--active > .at-menu__item-link::after { display: none !important; }',
-            'body.dn-on-team .at-menu__item:not(#dn-team-nav-item) > .at-menu__item-link.router-link-active { color: inherit !important; }',
-            'body.dn-on-team .at-menu__item:not(#dn-team-nav-item) > .at-menu__item-link.router-link-active::after { display: none !important; }',
-            // Projects direct link active state
+                // Projects direct link active state
             '#dn-projects-link > .at-menu__item-link { position: relative; }',
             '#dn-projects-link > .at-menu__item-link.dn-active { color: #2e2ef9 !important; }',
             '#dn-projects-link > .at-menu__item-link::after { content: ""; position: absolute; bottom: -0.75em; left: 0; width: 100%; height: 3px; background: currentColor; display: none; }',
@@ -82,11 +71,6 @@
         return store ? store.getters['user/user'] : null;
     }
 
-    function canViewTeam() {
-        var user = getUser();
-        return !!(user && user.can_view_team_tab);
-    }
-
     function isEmployee() {
         var user = getUser();
         return !!(user && parseInt(user.role_id, 10) === 2);
@@ -101,46 +85,6 @@
         if (!isOnTeamPage()) {
             localStorage.setItem('dashboard.tab', 'timeline');
         }
-    }
-
-    function injectTeamLink() {
-        if (document.getElementById(TEAM_NAV_ID)) return;
-        if (!canViewTeam()) return;
-
-        var navDiv = document.querySelector('.at-menu.navbar > div');
-        if (!navDiv) return;
-
-        var items = navDiv.querySelectorAll('.at-menu__item');
-        var dashItem = null;
-        for (var i = 0; i < items.length; i++) {
-            var a = items[i].querySelector('a.at-menu__item-link');
-            if (a && (a.getAttribute('href') === '/' || a.getAttribute('href') === '/dashboard')) {
-                dashItem = items[i];
-                break;
-            }
-        }
-        if (!dashItem) return;
-
-        var li = document.createElement('li');
-        li.id = TEAM_NAV_ID;
-        li.className = 'at-menu__item';
-
-        var a = document.createElement('a');
-        a.className = 'at-menu__item-link dn-team-link';
-        a.href = '/dashboard/team';
-        a.textContent = 'Team';
-        a.addEventListener('click', function (e) {
-            e.preventDefault();
-            var vm = document.getElementById('app').__vue__;
-            if (vm && vm.$router) {
-                vm.$router.push({ name: 'dashboard.team' });
-            } else {
-                window.location.href = '/dashboard/team';
-            }
-        });
-
-        li.appendChild(a);
-        dashItem.insertAdjacentElement('afterend', li);
     }
 
     function updateActiveState() {
@@ -251,9 +195,16 @@
     }
 
     // Replace the Reports dropdown (Time Use, Project, Planned Time, Universal) with a single
-    // direct link to /report/time-use ("Timecard Export").
+    // direct link to /report/time-use. Admins/Managers see "Team Reports"; employees see "Reports".
     function flattenReportsDropdown() {
-        if (document.getElementById(REPORTS_LINK_ID)) return;
+        var label = isEmployee() ? 'Reports' : 'Team Reports';
+
+        var existing = document.getElementById(REPORTS_LINK_ID);
+        if (existing) {
+            var existingA = existing.querySelector('.at-menu__item-link');
+            if (existingA) existingA.textContent = label;
+            return;
+        }
 
         var navDiv = document.querySelector('.at-menu.navbar > div');
         if (!navDiv) return;
@@ -278,7 +229,7 @@
         var a = document.createElement('a');
         a.className = 'at-menu__item-link';
         a.href = '/report/time-use';
-        a.textContent = 'Reports';
+        a.textContent = label;
         a.addEventListener('click', function (e) {
             e.preventDefault();
             var vm = document.getElementById('app').__vue__;
@@ -660,7 +611,6 @@
 
     function tick() {
         lockToTimeline();
-        injectTeamLink();
         flattenProjectsDropdown();
         flattenReportsDropdown();
         patchDashboardLink();
