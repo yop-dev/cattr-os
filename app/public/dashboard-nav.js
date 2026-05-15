@@ -535,7 +535,8 @@
             }
             _dnSidebarCache.map = map;
 
-            // Clear injected markers so next tick re-processes cards with fresh data
+            // Clear already-injected cards, then inject immediately — don't wait for
+            // MutationObserver since the timebar no longer generates constant DOM mutations.
             var cards = document.querySelectorAll('li.task[data-dn-times]');
             for (var j = 0; j < cards.length; j++) {
                 delete cards[j].dataset.dnTimes;
@@ -544,6 +545,7 @@
                 var oldBtn = cards[j].querySelector('.dn-play-btn');
                 if (oldBtn) oldBtn.parentNode.removeChild(oldBtn);
             }
+            injectSidebarTimes();
         })
         .catch(function() {
             _dnSidebarCache = null; // retry on next tick
