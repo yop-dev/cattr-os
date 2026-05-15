@@ -371,6 +371,7 @@
         isRunning = true;
         session   = srv;
         session._loggedLocally = !!loggedLocally;
+        window.__cattrCurrentSession = session;
 
         var input = document.getElementById('qc-task-input');
         if (input) { input.value = srv.task_name; input.readOnly = true; input.style.color = '#222'; }
@@ -392,6 +393,7 @@
     function showIdleState() {
         isRunning = false;
         session   = null;
+        window.__cattrCurrentSession = null;
 
         stopTimerDisplay();
 
