@@ -56,13 +56,15 @@
             'body.dn-on-timeline .screenshots { display: none !important; }',
             // Clockify-style task cards in dashboard sidebar
             'body.dn-on-timeline ul.task-list { padding: 0 !important; margin: 0 0 12px 0 !important; }',
-            'body.dn-on-timeline li.task { background: #fff; border: 1px solid #e5e7eb; border-radius: 6px; padding: 10px 14px; margin-bottom: 4px; display: flex !important; align-items: center; gap: 0; }',
+            'body.dn-on-timeline li.task { background: #fff; border: 1px solid #e5e7eb; border-radius: 6px; padding: 10px 14px; margin-bottom: 4px; display: flex !important; align-items: center; gap: 0; flex-wrap: wrap; }',
             'body.dn-on-timeline li.task .task__progress { display: none !important; }',
             'body.dn-on-timeline li.task > *:first-child { flex: 1 !important; min-width: 0; overflow: hidden; }',
             'body.dn-on-timeline li.task .task__title { margin: 0; font-weight: normal; font-size: 14px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }',
             'body.dn-on-timeline li.task .task__title-link { color: #111 !important; text-decoration: none !important; }',
-            '.dn-task-time { color: #9ca3af; font-size: 12px; white-space: nowrap; margin: 0 12px; flex-shrink: 0; }',
-            '.dn-task-dur { font-weight: 700; font-size: 14px; color: #374151; white-space: nowrap; flex-shrink: 0; }',
+            '.dn-iv-list { width: 100%; margin-top: 8px; padding-top: 8px; border-top: 1px solid #f0f0f0; display: flex; flex-direction: column; gap: 3px; }',
+            '.dn-iv-row { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; }',
+            '.dn-iv-dur { font-weight: 600; font-size: 13px; color: #374151; white-space: nowrap; flex-shrink: 0; }',
+            '.dn-iv-range { color: #888; font-size: 11px; white-space: nowrap; }',
             '.dn-play-btn { background: none; border: none; cursor: pointer; padding: 0; margin-left: 12px; color: #d1d5db; display: flex; align-items: center; flex-shrink: 0; line-height: 1; width: 28px; height: 28px; }',
             '.dn-play-btn:hover { color: #22c55e; }',
             'body.dn-session-active .dn-play-btn { display: none !important; }',
@@ -440,6 +442,21 @@
         return s;
     }
 
+    function fmtTime(dt) {
+        var h = dt.getHours(), m = dt.getMinutes(), s = dt.getSeconds();
+        var ampm = h >= 12 ? 'PM' : 'AM';
+        h = h % 12 || 12;
+        return (h < 10 ? '0' : '') + h + ':' + (m < 10 ? '0' : '') + m + ':' + (s < 10 ? '0' : '') + s + ampm;
+    }
+
+    function fmtDur(ms) {
+        var totalSec = Math.floor(Math.abs(ms) / 1000);
+        var h = Math.floor(totalSec / 3600);
+        var m = Math.floor((totalSec % 3600) / 60);
+        var s = totalSec % 60;
+        return (h < 10 ? '0' : '') + h + ':' + (m < 10 ? '0' : '') + m + ':' + (s < 10 ? '0' : '') + s;
+    }
+
     function startTaskFromCard(taskId) {
         fetch('/api/tracking/start', {
             method: 'POST',
@@ -490,11 +507,19 @@
             });
         }
 
-        // Collect task IDs that have intervals today
-        var taskIds = {};
+        // Group intervals by task_id, sorted most-recent-first
+        var taskIvMap = {};
         for (var i = 0; i < userIntervals.length; i++) {
             var iv = userIntervals[i];
-            if (iv.task_id) taskIds[String(iv.task_id)] = true;
+            if (!iv.task_id) continue;
+            var tid = String(iv.task_id);
+            if (!taskIvMap[tid]) taskIvMap[tid] = [];
+            taskIvMap[tid].push(iv);
+        }
+        for (var tid in taskIvMap) {
+            taskIvMap[tid].sort(function(a, b) {
+                return new Date(dnNormTs(b.start_at)) - new Date(dnNormTs(a.start_at));
+            });
         }
 
         // Task rows are li.task; task ID from .task__title-link href /tasks/view/{id}
@@ -509,30 +534,48 @@
             var hm = href.match(/\/tasks\/view\/(\d+)/);
             if (!hm) continue;
 
-            if (!taskIds[hm[1]]) continue;
+            if (!taskIvMap[hm[1]]) continue;
 
             el.dataset.dnTimes = '1';
-
-            // Read native duration text before CSS hides .task__progress
-            var durationEl = el.querySelector('.task__duration');
-            var durText = durationEl ? durationEl.textContent.trim() : '';
-
-            var durSpan = document.createElement('span');
-            durSpan.className = 'dn-task-dur';
-            durSpan.textContent = durText;
-            el.appendChild(durSpan);
 
             var playBtn = document.createElement('button');
             playBtn.className = 'dn-play-btn';
             playBtn.title = 'Start timer';
             playBtn.innerHTML = '<svg viewBox="0 0 24 24" width="24" height="24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>';
-            (function(tid) {
+            (function(taskId) {
                 playBtn.addEventListener('click', function(e) {
                     e.stopPropagation();
-                    startTaskFromCard(tid);
+                    startTaskFromCard(taskId);
                 });
             }(hm[1]));
             el.appendChild(playBtn);
+
+            // Per-interval list below the card header row
+            var ivs = taskIvMap[hm[1]];
+            var ivList = document.createElement('div');
+            ivList.className = 'dn-iv-list';
+            for (var k = 0; k < ivs.length; k++) {
+                var ivItem = ivs[k];
+                var start = new Date(dnNormTs(ivItem.start_at));
+                var end = ivItem.end_at ? new Date(dnNormTs(ivItem.end_at)) : null;
+                var durMs = end ? (end - start) : 0;
+
+                var row = document.createElement('div');
+                row.className = 'dn-iv-row';
+
+                var durEl = document.createElement('span');
+                durEl.className = 'dn-iv-dur';
+                durEl.textContent = fmtDur(durMs);
+
+                var rangeEl = document.createElement('span');
+                rangeEl.className = 'dn-iv-range';
+                rangeEl.textContent = fmtTime(start) + ' – ' + (end ? fmtTime(end) : '…');
+
+                row.appendChild(durEl);
+                row.appendChild(rangeEl);
+                ivList.appendChild(row);
+            }
+            el.appendChild(ivList);
         }
     }
 
