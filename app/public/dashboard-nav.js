@@ -202,7 +202,7 @@
         var existing = document.getElementById(REPORTS_LINK_ID);
         if (existing) {
             var existingA = existing.querySelector('.at-menu__item-link');
-            if (existingA) existingA.textContent = label;
+            if (existingA && existingA.textContent !== label) existingA.textContent = label;
             return;
         }
 
