@@ -62,7 +62,7 @@
             'body.dn-on-timeline li.task .task__title { margin: 0; font-weight: normal; font-size: 14px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }',
             'body.dn-on-timeline li.task .task__title-link { color: #111 !important; text-decoration: none !important; }',
             '.dn-iv-list { width: 100%; margin-top: 8px; padding-top: 8px; border-top: 1px solid #f0f0f0; display: flex; flex-direction: column; gap: 3px; }',
-            '.dn-iv-row { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; }',
+            '.dn-iv-row { display: flex; flex-direction: column; gap: 2px; }',
             '.dn-iv-dur { font-weight: 600; font-size: 13px; color: #374151; white-space: nowrap; flex-shrink: 0; }',
             '.dn-iv-range { color: #888; font-size: 11px; white-space: nowrap; }',
             '.dn-play-btn { background: none; border: none; cursor: pointer; padding: 0; margin-left: 12px; color: #d1d5db; display: flex; align-items: center; flex-shrink: 0; line-height: 1; width: 28px; height: 28px; }',
