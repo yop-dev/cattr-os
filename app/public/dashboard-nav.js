@@ -457,7 +457,9 @@
         return (h < 10 ? '0' : '') + h + ':' + (m < 10 ? '0' : '') + m + ':' + (s < 10 ? '0' : '') + s;
     }
 
-    // Collapse contiguous intervals (gap ≤ 30s) into one row, same as Reports page.
+    // Collapse contiguous intervals (gap ≤ 60s) into one row, same as Reports page.
+    // 60s threshold (vs Reports' 30s) accounts for Vuex store timestamps being stored at
+    // lower precision than the API response — real session gaps are minutes, not seconds.
     // Returns ascending-sorted merged array.
     function mergeIntervals(ivs) {
         if (!ivs || !ivs.length) return ivs;
@@ -468,8 +470,10 @@
         for (var i = 1; i < sorted.length; i++) {
             var prev = merged[merged.length - 1];
             var gap = new Date(dnNormTs(sorted[i].start_at)) - new Date(dnNormTs(prev.end_at));
-            if (gap <= 30000) {
-                prev.end_at = sorted[i].end_at;
+            if (gap <= 60000) {
+                if (new Date(dnNormTs(sorted[i].end_at)) > new Date(dnNormTs(prev.end_at))) {
+                    prev.end_at = sorted[i].end_at;
+                }
             } else {
                 merged.push({ start_at: sorted[i].start_at, end_at: sorted[i].end_at });
             }
