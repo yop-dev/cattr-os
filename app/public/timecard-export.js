@@ -129,6 +129,32 @@
         }
     }
 
+    function toLocalInputVal(isoUtc) {
+        var d = new Date(normTs(isoUtc));
+        var parts = new Intl.DateTimeFormat('en-CA', {
+            timeZone: _tz,
+            year: 'numeric', month: '2-digit', day: '2-digit',
+            hour: '2-digit', minute: '2-digit', hourCycle: 'h23',
+        }).formatToParts(d);
+        var p = {};
+        parts.forEach(function (pt) { p[pt.type] = pt.value; });
+        return p.year + '-' + p.month + '-' + p.day + 'T' + p.hour + ':' + p.minute;
+    }
+
+    function localInputToUtcIso(localStr) {
+        var roughUtc = new Date(localStr + ':00Z');
+        var parts = new Intl.DateTimeFormat('en-CA', {
+            timeZone: _tz,
+            year: 'numeric', month: '2-digit', day: '2-digit',
+            hour: '2-digit', minute: '2-digit', hourCycle: 'h23',
+        }).formatToParts(roughUtc);
+        var p = {};
+        parts.forEach(function (pt) { p[pt.type] = pt.value; });
+        var roughLocalStr = p.year + '-' + p.month + '-' + p.day + 'T' + p.hour + ':' + p.minute;
+        var offsetMs = roughUtc.getTime() - new Date(roughLocalStr + ':00Z').getTime();
+        return new Date(roughUtc.getTime() + offsetMs).toISOString();
+    }
+
     function durationSecs(start_at, end_at) {
         return Math.max(0, Math.round((new Date(normTs(end_at)) - new Date(normTs(start_at))) / 1000));
     }
@@ -221,8 +247,8 @@
 
     function openEditModal(iv) {
         closeEditModal();
-        var startVal = normTs(iv.start_at || new Date().toISOString()).slice(0, 16);
-        var endVal   = normTs(iv.end_at   || new Date().toISOString()).slice(0, 16);
+        var startVal = toLocalInputVal(iv.start_at || new Date().toISOString());
+        var endVal   = toLocalInputVal(iv.end_at   || new Date().toISOString());
         var taskName = iv.task ? (iv.task.task_name || '—') : '—';
         var project  = iv.task && iv.task.project ? iv.task.project.name : '';
 
@@ -273,8 +299,8 @@
             saveBtn.disabled = true;
             saveBtn.textContent = 'Saving…';
 
-            var startIso = new Date(startInput + ':00Z').toISOString();
-            var endIso   = new Date(endInput   + ':00Z').toISOString();
+            var startIso = localInputToUtcIso(startInput);
+            var endIso   = localInputToUtcIso(endInput);
 
             saveEdit(iv, startIso, endIso).then(function () {
                 closeEditModal();
