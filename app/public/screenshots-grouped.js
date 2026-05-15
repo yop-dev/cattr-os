@@ -185,6 +185,7 @@
             body: JSON.stringify(body)
         }).then(function (r) {
             if (!r.ok) throw new Error('HTTP ' + r.status);
+            if (r.status === 204) return null;
             return r.json();
         });
     }
