@@ -25,7 +25,16 @@ use App\Http\Controllers\Api\TaskCommentController;
 use App\Http\Controllers\Controller;
 use App\Http\Controllers\StatusController;
 use App\Http\Controllers\Api\TaskActivityController;
+use Illuminate\Cache\RateLimiting\Limit;
 use Illuminate\Routing\Router;
+use Illuminate\Support\Facades\RateLimiter;
+
+// EC-001: Per-user rate limit for tracking endpoints — prevents shared IP bucket exhaustion
+// under multi-user NAT or multi-tab use. 600 req/min per user = 10/sec, well above the
+// 1 req/3sec poll rate after C-022 polling reduction.
+RateLimiter::for('tracking-per-user', function (\Illuminate\Http\Request $request) {
+    return Limit::perMinute(600)->by(optional($request->user())->id ?: $request->ip());
+});
 
 // Routes for login/register processing
 Route::group([
@@ -325,7 +334,7 @@ Route::group([
         if (!$userId) return response()->json(['error' => 'Unauthenticated'], 401);
         $session = \Illuminate\Support\Facades\Cache::get("tracking_session_{$userId}");
         return response()->json(['data' => $session]);
-    })->middleware('throttle:600,1');
+    })->middleware('throttle:tracking-per-user');
     $router->post('tracking/start', function (\Illuminate\Http\Request $request) {
         $userId = optional($request->user())->id;
         if (!$userId) return response()->json(['error' => 'Unauthenticated'], 401);
@@ -349,13 +358,13 @@ Route::group([
         ];
         \Illuminate\Support\Facades\Cache::put("tracking_session_{$userId}", $session, 86400);
         return response()->json(['data' => $session]);
-    })->middleware('throttle:600,1');
+    })->middleware('throttle:tracking-per-user');
     $router->post('tracking/stop', function (\Illuminate\Http\Request $request) {
         $userId = optional($request->user())->id;
         if (!$userId) return response()->json(['error' => 'Unauthenticated'], 401);
         \Illuminate\Support\Facades\Cache::forget("tracking_session_{$userId}");
         return response()->json(['data' => null]);
-    })->middleware('throttle:600,1');
+    })->middleware('throttle:tracking-per-user');
 });
 
 Route::any('(.*)', [Controller::class, 'universalRoute'])->name('universal_route');
