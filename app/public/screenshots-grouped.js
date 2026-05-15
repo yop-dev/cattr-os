@@ -348,7 +348,7 @@
         var order   = [];
 
         intervals.forEach(function (iv) {
-            var parts = toLocalParts(iv.start_at, tz);
+            var parts = toLocalParts(iv.end_at, tz);
             var h     = parts.hour24;
             if (!buckets[h]) { buckets[h] = []; order.push(h); }
             buckets[h].push({ interval: iv, localParts: parts });
