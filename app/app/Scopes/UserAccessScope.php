@@ -36,14 +36,9 @@ class UserAccessScope implements Scope
 
         throw_unless($user, new AuthorizationException);
 
-        if ($user->hasRole([Role::ADMIN, Role::MANAGER, Role::AUDITOR])) {
-            return $builder;
-        }
-
-        // C-002 side-effect fix: employees who create projects get project MANAGER role in
-        // projects_users. The upstream orWhereHas expansion would let employee-creators see
-        // all other project members in User queries (reports user filter, task assignee lists).
-        // Employees must only ever see themselves.
-        return $builder->where('id', $user->id);
+        // C-026 extension: all roles see all users — employees need the full user list
+        // so the quick-create timer bar can fetch tasks assigned to any user.
+        // Permission checks on individual user data are enforced by policies.
+        return $builder;
     }
 }
