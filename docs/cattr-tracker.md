@@ -25,6 +25,9 @@ All planned changes and known bugs for the Cattr deployment. Customisations are 
 | C-019 | Dashboard screenshots section — card UI matching Screenshots page + clickable lightbox modal | ❌ Reverted | Medium |
 | C-020 | Clockify-style timer bar with web↔desktop bidirectional sync (1-second polling) | ✅ Done | High |
 | C-021 | Dashboard redesign — single-column layout (bar → project/task totals); bar click shows task/project/duration only, no screenshot | ✅ Done | Medium |
+| C-022 | Hide in-progress intervals — suppress live desktop intervals from Reports, Screenshots, Dashboard sidebar until session stops | ✅ Done | High |
+| C-023 | Dashboard sidebar — per-interval rows matching Reports format (bold duration + gray time range stacked) | ✅ Done | Medium |
+| C-024 | Nav — remove Team link; rename Reports → "Team Reports" for admins | ✅ Done | Low |
 
 ---
 
@@ -1043,7 +1046,8 @@ Neither option is clean enough. Option A requires distributing a patched `.exe` 
 | BUG-024 | Interval timestamps stored in company local timezone (PDT) instead of UTC — create filter called `->setTimezone(company_tz)` causing Eloquent to format in PDT; native UI then double-converts PDT→PDT giving times 7h behind | ✅ Fixed | High |
 | BUG-025 | Desktop creates 3 intervals per session (two overlapping with identical `start_at` + one 2s tail) — display patched via `mergeContiguousIntervals`, root cause unknown | ✅ Fixed | Medium |
 | BUG-026 | Edit time entry modal on Reports shows times in wrong timezone vs. the rest of the page | ✅ Fixed | Medium |
-| BUG-027 | Dashboard time bar shows some sessions ~7h off their actual position — likely old BUG-024 data or a `normTs` miss in bar rendering | 🔍 Pending | Low |
+| BUG-027 | Dashboard time bar shows some sessions ~7h off their actual position | ✅ Fixed | Low |
+| BUG-028 | Team page timeline bars show at UTC time instead of user's local time — `DashboardExport::collection()` computed `from_midnight` without applying user timezone | ✅ Fixed | Medium |
 
 ---
 
@@ -2218,22 +2222,82 @@ Commits: `46bc376`, `4a1ef80` in `cattr-server` repo.
 
 ### BUG-027 — Dashboard time bar shows incorrect position for some sessions (~7h offset)
 
-**Status:** 🔍 Pending investigation
+**Status:** ✅ Fixed — 2026-05-15
 **Discovered:** 2026-05-14
-**Severity:** Low–Medium — bar position misleads manager when reviewing who was active when
+**Severity:** Low–Medium
+
+#### Fix
+
+The D3 timeline bar (`.at-container.intervals`) was removed entirely as part of C-023 (dashboard sidebar now shows per-interval rows). The click-suppression hack (`patchTimelineClick`) was also removed. This eliminated the positioning problem and the underlying UTC/PDT confusion.
+
+---
+
+### BUG-028 — Team page timeline bars show at UTC time instead of local time
+
+**Status:** ✅ Fixed — 2026-05-15
+**Discovered:** 2026-05-15
+**Severity:** Medium — bars appear ~7h off for PDT users
 
 #### Symptom
 
-A session that actually ran at ~7 AM PDT appears on the dashboard timeline bar at ~2 PM (the UTC equivalent). Other sessions display correctly.
+On the Team page (`/dashboard/team`), the timeline bars for each user appeared ~7 hours later than the actual session time. A session at 12:56 AM PDT showed at ~8 AM on the bar.
 
-#### Root Cause (hypothesis)
+#### Root Cause
 
-Two possible sources:
+`DashboardExport::collection()` in `app/app/Reports/DashboardExport.php` computed `from_midnight` (seconds since midnight, used by the D3 bar to position intervals) using UTC midnight:
 
-1. **Old BUG-024 data** — intervals stored before the BUG-024 fix have `start_at` in PDT (e.g. `07:34` instead of `14:34`). The bar renders them at face value as if they were UTC, placing them 7 hours early on the timeline. These can't be fixed at display time without knowing which rows are affected.
+```php
+$start = Carbon::make($interval->start_at);  // parses as UTC
+$interval->from_midnight = $start?->diffInSeconds($start?->copy()->startOfDay());  // UTC midnight
+```
 
-2. **`dashboard-nav.js` display bug** — the bar rendering code may still have a path that parses timestamps without forcing UTC (missing `normTs()` / `Z` suffix), causing Chrome's `new Date("YYYY-MM-DD HH:MM:SS")` to treat the value as local time rather than UTC.
+`$this->userTimezone` was available in the class but not applied here.
 
-#### Next Step
+#### Fix
 
-Open Dashboard DevTools → inspect the `.at-container.intervals rect` elements for the affected session → check `data-start` / `data-end` or equivalent attributes to determine whether the bar is receiving the correct UTC timestamp or a shifted one.
+Apply `$that->userTimezone` to `$start` before calling `startOfDay()`:
+
+```php
+$tz = $that->userTimezone ?? $that->companyTimezone ?? 'UTC';
+$start = Carbon::make($interval->start_at)?->setTimezone($tz);
+$interval->from_midnight = $start?->diffInSeconds($start?->copy()->startOfDay());
+```
+
+`diffInSeconds` for `duration` is timezone-agnostic (absolute diff) and is unaffected by the timezone change.
+
+#### Files Modified
+
+| File | Repo | Change |
+|---|---|---|
+| `app/app/Reports/DashboardExport.php` | cattr-server | Apply `userTimezone` to `$start` before `startOfDay()` |
+| `Dockerfile` | cattr-server | COPY override for `DashboardExport.php` |
+
+---
+
+### EC-001 — "Too Many Attempts" errors / occasional logout under multi-user load
+
+**Status:** ✅ Fixed — 2026-05-15
+**Discovered:** 2026-05-15
+**Severity:** High — affects all users simultaneously when shared IP bucket fills
+
+#### Root Cause
+
+The tracking routes used `throttle:600,1` — 600 requests per minute keyed by IP. With 10 users each polling `tracking/current` every second, the shared bucket fills exactly at 600 req/min, triggering HTTP 429 for all users simultaneously.
+
+#### Fix
+
+Defined a named rate limiter in `app/routes/api.php` keyed by user ID instead of IP:
+
+```php
+RateLimiter::for('tracking-per-user', function (\Illuminate\Http\Request $request) {
+    return Limit::perMinute(600)->by(optional($request->user())->id ?: $request->ip());
+});
+```
+
+All three tracking routes (`tracking/current`, `tracking/start`, `tracking/stop`) now use `throttle:tracking-per-user`.
+
+#### Files Modified
+
+| File | Repo | Change |
+|---|---|---|
+| `app/routes/api.php` | cattr-server | Named per-user rate limiter; tracking routes use `throttle:tracking-per-user` |
