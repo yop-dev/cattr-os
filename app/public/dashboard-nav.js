@@ -490,39 +490,11 @@
             });
         }
 
-        // Group by task_id -> earliest start_at, latest end_at
-        var taskRanges = {};
+        // Collect task IDs that have intervals today
+        var taskIds = {};
         for (var i = 0; i < userIntervals.length; i++) {
             var iv = userIntervals[i];
-            if (!iv.task_id || !iv.start_at) continue;
-            var key = String(iv.task_id);
-            if (!taskRanges[key]) {
-                taskRanges[key] = { start: iv.start_at, end: iv.end_at || iv.start_at };
-            } else {
-                if (iv.start_at < taskRanges[key].start) taskRanges[key].start = iv.start_at;
-                if (iv.end_at && iv.end_at > taskRanges[key].end) taskRanges[key].end = iv.end_at;
-            }
-        }
-
-        function fmtUTC(iso) {
-            // Normalize: append Z if no timezone suffix so the date is parsed as UTC
-            var s = String(iso || '').replace(' ', 'T');
-            if (!/Z|[+-]\d{2}:\d{2}$/.test(s)) s += 'Z';
-            var tz = window.__cattrTz || 'America/Los_Angeles';
-            try {
-                var parts = new Intl.DateTimeFormat('en-US', {
-                    timeZone: tz, hour: 'numeric', minute: '2-digit', hour12: true,
-                }).formatToParts(new Date(s));
-                var tm = {};
-                parts.forEach(function (p) { tm[p.type] = p.value; });
-                return (tm.hour || '12') + ':' + (tm.minute || '00') + ' ' + (tm.dayPeriod || 'AM').replace(/\s/g, '');
-            } catch (e) {
-                var d = new Date(s);
-                var h = d.getHours(), m = d.getMinutes();
-                var ap = h >= 12 ? 'PM' : 'AM';
-                h = h % 12 || 12;
-                return h + ':' + (m < 10 ? '0' + m : m) + ' ' + ap;
-            }
+            if (iv.task_id) taskIds[String(iv.task_id)] = true;
         }
 
         // Task rows are li.task; task ID from .task__title-link href /tasks/view/{id}
@@ -537,20 +509,13 @@
             var hm = href.match(/\/tasks\/view\/(\d+)/);
             if (!hm) continue;
 
-            var range = taskRanges[hm[1]];
-            if (!range) continue;
+            if (!taskIds[hm[1]]) continue;
 
             el.dataset.dnTimes = '1';
 
             // Read native duration text before CSS hides .task__progress
             var durationEl = el.querySelector('.task__duration');
             var durText = durationEl ? durationEl.textContent.trim() : '';
-
-            // Append time range and duration as flex siblings after .task__title
-            var timeSpan = document.createElement('span');
-            timeSpan.className = 'dn-task-time';
-            timeSpan.textContent = fmtUTC(range.start) + ' – ' + fmtUTC(range.end);
-            el.appendChild(timeSpan);
 
             var durSpan = document.createElement('span');
             durSpan.className = 'dn-task-dur';
