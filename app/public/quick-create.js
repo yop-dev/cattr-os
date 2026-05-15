@@ -80,9 +80,7 @@
     }
 
     function fetchTasks() {
-        var userId = getCurrentUserId();
         var body = { where: { active: 1 } };
-        if (userId) body.where['users.id'] = ['=', [userId]];
         return apiFetch('/api/tasks/list', { method: 'POST', body: JSON.stringify(body) })
             .then(function(r) { return r.json(); })
             .then(function(data) {
