@@ -29,7 +29,7 @@ All planned changes and known bugs for the Cattr deployment. Customisations are 
 | C-023 | Dashboard sidebar — per-interval rows matching Reports format (bold duration + gray time range stacked) | ✅ Done | Medium |
 | C-024 | Nav — remove Team link; rename Reports → "Team Reports" for admins | ✅ Done | Low |
 | C-025 | Desktop app reminder — static hint below quick-create bar to open desktop app before tracking | ✅ Done | Low |
-| C-026 | All users see all tasks (web timer bar + desktop) — TaskAccessScope override + status_id DB fix + removed users.id relation filter from fetchTasks | ✅ Done | Medium |
+| C-026 | All users see all tasks (web timer bar + desktop) — TaskAccessScope override + status_id DB fix + removed users.id filter + added X-Paginate: false | ✅ Done | Medium |
 
 ---
 
@@ -1058,7 +1058,7 @@ Neither option is clean enough. Option A requires distributing a patched `.exe` 
 | BUG-034 | PDF export runs merge + jsPDF synchronously with no loading state — browser tab freezes on large date ranges | ✅ Fixed | Low |
 | BUG-035 | Edit modal timezone label showed server timezone instead of browser local timezone — misleading for admins | ✅ Fixed | Low |
 | BUG-036 | Desktop clock skew vs server causes future-dated start_at and cascading 422s — no detection or warning | ✅ Fixed | Low |
-| BUG-037 | Web timer bar task search missing unassigned tasks (desk proj, shop titan, create proj, test on desk) for all users — users.id whereHas filter in fetchTasks excluded tasks with no entries in tasks_users pivot | ✅ Fixed | High |
+| BUG-037 | Web timer bar task search truncated to 15 results — tasks/list paginates at 15 by default; tasks beyond page 1 invisible. Fixed: X-Paginate: false header in fetchTasks | ✅ Fixed | High |
 
 ---
 
