@@ -22,6 +22,10 @@
     var _pollDestroyed  = false;
     var _docClickHandler = null;
 
+    // Desktop heartbeat detection
+    var _desktopRunning    = null;  // null=unknown, true=running, false=not running
+    var _desktopCheckTimer = null;
+
     // ─── Utilities ───────────────────────────────────────────────────────────
     function token() { return localStorage.getItem('access_token') || ''; }
 
@@ -343,6 +347,29 @@
         if (timerEl) { timerEl.style.display = 'none'; timerEl.textContent = '00:00:00'; }
     }
 
+    // ─── Desktop heartbeat check ──────────────────────────────────────────────
+    function checkDesktopStatus() {
+        apiFetch('/api/tracking/desktop-status', { method: 'POST', body: '{}' })
+            .then(function(r) { return r.json(); })
+            .then(function(d) {
+                var running = !!(d && d.data && d.data.running);
+                if (running === _desktopRunning) return; // no change — skip DOM update
+                _desktopRunning = running;
+                if (!isRunning) updateActionButton();
+            })
+            .catch(function() {}); // silent — don't block UI on network failure
+    }
+
+    function startDesktopCheck() {
+        if (_desktopCheckTimer) return;
+        checkDesktopStatus();
+        _desktopCheckTimer = setInterval(checkDesktopStatus, 5000);
+    }
+
+    function stopDesktopCheck() {
+        if (_desktopCheckTimer) { clearInterval(_desktopCheckTimer); _desktopCheckTimer = null; }
+    }
+
     // ─── Polling ──────────────────────────────────────────────────────────────
     function startPolling() {
         if (pollTimer) return;
@@ -422,6 +449,17 @@
     function updateActionButton() {
         var btn = document.getElementById('qc-action-btn');
         if (!btn || isRunning) return;
+
+        if (_desktopRunning === false) {
+            btn.disabled         = true;
+            btn.textContent      = 'Start';
+            btn.style.background = '#d0d5dd';
+            btn.style.cursor     = 'not-allowed';
+            showWarning('Open the desktop app to start tracking');
+            return;
+        }
+
+        clearMessage();
         var ready = false;
         if (selectedTask !== null) {
             ready = true;
@@ -450,6 +488,13 @@
         msg.textContent = text;
     }
 
+    function showWarning(text) {
+        var msg = document.getElementById('qc-message');
+        if (!msg) return;
+        msg.style.display = 'flex'; msg.style.color = '#b45309';
+        msg.textContent = text;
+    }
+
     function setLoading(loading) {
         var btn = document.getElementById('qc-action-btn');
         if (!btn) return;
@@ -462,6 +507,10 @@
 
     // ─── Start Tracking ───────────────────────────────────────────────────────
     function doStart(taskId, taskName, projectName) {
+        if (_desktopRunning === false) {
+            showWarning('Open the desktop app to start tracking');
+            return Promise.resolve();
+        }
         var startAt = new Date().toISOString();
         return apiFetch('/api/tracking/start', {
             method: 'POST',
@@ -725,6 +774,7 @@
 
         _pollDestroyed = false;
         startPolling();
+        startDesktopCheck();
 
     }
 
@@ -732,6 +782,7 @@
     function cleanup() {
         _pollDestroyed = true;
         stopPolling();
+        stopDesktopCheck();
         stopTimerDisplay();
         if (docListenerAttached) {
             if (_docClickHandler) {
