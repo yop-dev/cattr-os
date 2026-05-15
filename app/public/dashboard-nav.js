@@ -457,6 +457,26 @@
         return (h < 10 ? '0' : '') + h + ':' + (m < 10 ? '0' : '') + m + ':' + (s < 10 ? '0' : '') + s;
     }
 
+    // Collapse contiguous intervals (gap ≤ 30s) into one row, same as Reports page.
+    // Returns ascending-sorted merged array.
+    function mergeIntervals(ivs) {
+        if (!ivs || !ivs.length) return ivs;
+        var sorted = ivs.slice().sort(function(a, b) {
+            return new Date(dnNormTs(a.start_at)) - new Date(dnNormTs(b.start_at));
+        });
+        var merged = [{ start_at: sorted[0].start_at, end_at: sorted[0].end_at }];
+        for (var i = 1; i < sorted.length; i++) {
+            var prev = merged[merged.length - 1];
+            var gap = new Date(dnNormTs(sorted[i].start_at)) - new Date(dnNormTs(prev.end_at));
+            if (gap <= 30000) {
+                prev.end_at = sorted[i].end_at;
+            } else {
+                merged.push({ start_at: sorted[i].start_at, end_at: sorted[i].end_at });
+            }
+        }
+        return merged;
+    }
+
     function startTaskFromCard(taskId) {
         fetch('/api/tracking/start', {
             method: 'POST',
@@ -517,9 +537,7 @@
             taskIvMap[tid].push(iv);
         }
         for (var tid in taskIvMap) {
-            taskIvMap[tid].sort(function(a, b) {
-                return new Date(dnNormTs(b.start_at)) - new Date(dnNormTs(a.start_at));
-            });
+            taskIvMap[tid] = mergeIntervals(taskIvMap[tid]).reverse();
         }
 
         // Task rows are li.task; task ID from .task__title-link href /tasks/view/{id}
