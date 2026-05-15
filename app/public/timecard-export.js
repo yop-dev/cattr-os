@@ -130,15 +130,19 @@
     }
 
     function toLocalInputVal(isoUtc) {
-        var d = new Date(normTs(isoUtc));
-        var parts = new Intl.DateTimeFormat('en-CA', {
-            timeZone: _tz,
-            year: 'numeric', month: '2-digit', day: '2-digit',
-            hour: '2-digit', minute: '2-digit', hourCycle: 'h23',
-        }).formatToParts(d);
-        var p = {};
-        parts.forEach(function (pt) { p[pt.type] = pt.value; });
-        return p.year + '-' + p.month + '-' + p.day + 'T' + p.hour + ':' + p.minute;
+        try {
+            var d = new Date(normTs(isoUtc));
+            var parts = new Intl.DateTimeFormat('en-CA', {
+                timeZone: _tz,
+                year: 'numeric', month: '2-digit', day: '2-digit',
+                hour: '2-digit', minute: '2-digit', hourCycle: 'h23',
+            }).formatToParts(d);
+            var p = {};
+            parts.forEach(function (pt) { p[pt.type] = pt.value; });
+            return p.year + '-' + p.month + '-' + p.day + 'T' + p.hour + ':' + p.minute;
+        } catch (e) {
+            return '';
+        }
     }
 
     function localInputToUtcIso(localStr) {
@@ -151,6 +155,7 @@
         var p = {};
         parts.forEach(function (pt) { p[pt.type] = pt.value; });
         var roughLocalStr = p.year + '-' + p.month + '-' + p.day + 'T' + p.hour + ':' + p.minute;
+        // Single-iteration offset — may be off by 1h if localStr straddles a DST spring-forward boundary
         var offsetMs = roughUtc.getTime() - new Date(roughLocalStr + ':00Z').getTime();
         return new Date(roughUtc.getTime() + offsetMs).toISOString();
     }
@@ -265,7 +270,7 @@
             '<label class="dn-edit-label">End' +
             '<input class="dn-edit-input" id="dn-edit-end" type="datetime-local" value="' + esc(endVal) + '">' +
             '</label>' +
-            '<div class="dn-edit-tz">Times shown in your local timezone</div>' +
+            '<div class="dn-edit-tz">Times shown in company timezone (' + _tz + ')</div>' +
             '<div class="dn-edit-error" id="dn-edit-error" style="display:none"></div>' +
             '<div class="dn-edit-actions">' +
             '<button class="at-btn at-btn--small" id="dn-edit-cancel">Cancel</button>' +
