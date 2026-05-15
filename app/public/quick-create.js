@@ -80,7 +80,7 @@
     }
 
     function fetchTasks() {
-        return apiFetch('/api/tasks/list', { method: 'POST', body: '{}' })
+        return apiFetch('/api/tasks/list', { method: 'POST', body: '{}', headers: { 'X-Paginate': 'false' } })
             .then(function(r) { return r.json(); })
             .then(function(data) {
                 var rows = (data && data.data) ? data.data : [];
