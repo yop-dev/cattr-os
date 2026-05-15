@@ -190,7 +190,7 @@
     }
 
     function filterActiveSession(rows, activeSession, currentUserId) {
-        if (!activeSession) return rows;
+        if (!activeSession || !activeSession.start_at) return rows;
         var sessionStart = new Date(normTs(activeSession.start_at));
         return rows.filter(function (iv) {
             if (!iv.user || String(iv.user.id) !== String(currentUserId)) return true;
@@ -530,9 +530,11 @@
 
         try {
             var intervals = await fetchIntervals(dates.start, dates.end, userIds);
-            var activeSession = await apiFetch('tracking/current', {})
-                .then(function (d) { return (d && d.data) ? d.data : null; })
-                .catch(function () { return null; });
+            var activeSession = null;
+            try {
+                var _sessResp = await apiFetch('tracking/current', {});
+                activeSession = (_sessResp && _sessResp.data) ? _sessResp.data : null;
+            } catch (e) {}
             var filteredRows = filterActiveSession(intervals.rows, activeSession, getCurrentUserId());
             container = document.getElementById(CONTAINER_ID);
             if (!container) return; // navigated away during fetch
