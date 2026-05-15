@@ -63,6 +63,7 @@ Test with two accounts open simultaneously where noted:
 ### Desktop stop → Web sync
 - [ ] While tracking from desktop → stop from desktop
 - [ ] Web bar returns to idle within 2 seconds
+- [ ] One interval recorded in Reports (not two)
 
 ### Task switch
 - [ ] Start task A from desktop → switch to task B from desktop
@@ -158,7 +159,7 @@ Test with two accounts open simultaneously where noted:
 - [ ] Dashboard → type a task name that doesn't exist → `+ Create "[name]"` option appears
 - [ ] Select `+ Create "[name]"` → project selector appears
 - [ ] Select or create a project → Start button becomes active
-- [ ] Click Start (or "Add & Start") → task created, timer starts
+- [ ] Click Start → task created, timer starts
 - [ ] New task visible in Desktop app (may take a moment to sync)
 
 ---
