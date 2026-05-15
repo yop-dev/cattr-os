@@ -41,6 +41,9 @@ COPY app/public/dashboard-nav.js /app/public/dashboard-nav.js
 # C-011: All users can see all projects (prevent duplicate project creation)
 COPY app/app/Scopes/ProjectAccessScope.php /app/app/Scopes/ProjectAccessScope.php
 
+# C-026: All users can see all tasks (allows reusing tasks created by other users)
+COPY app/app/Scopes/TaskAccessScope.php /app/app/Scopes/TaskAccessScope.php
+
 # C-012: Time interval form — lower task search to 1 char, add inline task creation
 COPY app/public/time-interval-helpers.js /app/public/time-interval-helpers.js
 
