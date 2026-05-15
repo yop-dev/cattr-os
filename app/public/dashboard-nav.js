@@ -4,6 +4,9 @@
     var TEAM_NAV_ID = 'dn-team-nav-item';
     var REPORTS_LINK_ID = 'dn-reports-link';
 
+    var _dnSidebarCache = null; // { date, ts, map } or null
+    var _dnLastSessKey  = undefined; // task_id of last known session, for invalidation
+
     function injectCSS() {
         if (document.getElementById('dn-styles')) return;
         var style = document.createElement('style');
@@ -457,28 +460,91 @@
         return (h < 10 ? '0' : '') + h + ':' + (m < 10 ? '0' : '') + m + ':' + (s < 10 ? '0' : '') + s;
     }
 
-    // Collapse contiguous intervals (gap ≤ 60s) into one row, same as Reports page.
-    // 60s threshold (vs Reports' 30s) accounts for Vuex store timestamps being stored at
-    // lower precision than the API response — real session gaps are minutes, not seconds.
-    // Returns ascending-sorted merged array.
-    function mergeIntervals(ivs) {
-        if (!ivs || !ivs.length) return ivs;
-        var sorted = ivs.slice().sort(function(a, b) {
-            return new Date(dnNormTs(a.start_at)) - new Date(dnNormTs(b.start_at));
-        });
-        var merged = [{ start_at: sorted[0].start_at, end_at: sorted[0].end_at }];
-        for (var i = 1; i < sorted.length; i++) {
-            var prev = merged[merged.length - 1];
-            var gap = new Date(dnNormTs(sorted[i].start_at)) - new Date(dnNormTs(prev.end_at));
-            if (gap <= 60000) {
-                if (new Date(dnNormTs(sorted[i].end_at)) > new Date(dnNormTs(prev.end_at))) {
-                    prev.end_at = sorted[i].end_at;
-                }
-            } else {
-                merged.push({ start_at: sorted[i].start_at, end_at: sorted[i].end_at });
-            }
+    // Fetch today's intervals from the same API as Reports, apply the exact same 30s merge,
+    // and cache the result. Cache is invalidated when the active session changes (start/stop).
+    function fetchSidebarIntervals(userId, today) {
+        var now = Date.now();
+        if (_dnSidebarCache && _dnSidebarCache.date === today &&
+                _dnSidebarCache.map !== undefined && (now - _dnSidebarCache.ts) < 15000) {
+            return; // still fresh
         }
-        return merged;
+        _dnSidebarCache = { date: today, ts: now, map: undefined }; // mark as fetching
+
+        fetch('/api/time-intervals/list', {
+            method: 'POST',
+            headers: {
+                'Authorization': 'Bearer ' + dnToken(),
+                'Content-Type': 'application/json',
+                'Accept': 'application/json',
+                'X-Paginate': 'false'
+            },
+            body: JSON.stringify({
+                start_from: today + ' 00:00:00',
+                end_to: today + ' 23:59:59',
+                user_ids: [userId]
+            })
+        })
+        .then(function(r) { return r.ok ? r.json() : null; })
+        .then(function(d) {
+            var rows = (d && d.data) ? d.data : [];
+
+            // C-022: strip active-session intervals (same logic as timecard-export.js)
+            var sess = window.__cattrCurrentSession;
+            if (sess && sess.start_at) {
+                var sessStart = new Date(dnNormTs(sess.start_at));
+                rows = rows.filter(function(iv) {
+                    if (!iv.task || String(iv.task.id) !== String(sess.task_id)) return true;
+                    if (!iv.user || String(iv.user.id) !== String(userId)) return true;
+                    return new Date(dnNormTs(iv.start_at)) < sessStart;
+                });
+            }
+
+            // Exact same merge as Reports page: 30s threshold, same-task check
+            var sorted = rows.slice().sort(function(a, b) {
+                return new Date(dnNormTs(a.start_at)) - new Date(dnNormTs(b.start_at));
+            });
+            var merged = [];
+            sorted.forEach(function(iv) {
+                if (!merged.length) {
+                    merged.push({ start_at: iv.start_at, end_at: iv.end_at, task: iv.task });
+                    return;
+                }
+                var last = merged[merged.length - 1];
+                var sameTask = last.task && iv.task && String(last.task.id) === String(iv.task.id);
+                var gap = new Date(dnNormTs(iv.start_at)) - new Date(dnNormTs(last.end_at));
+                if (sameTask && gap <= 30000) {
+                    if (new Date(dnNormTs(iv.end_at)) > new Date(dnNormTs(last.end_at))) {
+                        last.end_at = iv.end_at;
+                    }
+                } else {
+                    merged.push({ start_at: iv.start_at, end_at: iv.end_at, task: iv.task });
+                }
+            });
+
+            // Group by task.id, most-recent-first
+            var map = {};
+            for (var i = merged.length - 1; i >= 0; i--) {
+                var iv = merged[i];
+                if (!iv.task) continue;
+                var tid = String(iv.task.id);
+                if (!map[tid]) map[tid] = [];
+                map[tid].push(iv);
+            }
+            _dnSidebarCache.map = map;
+
+            // Clear injected markers so next tick re-processes cards with fresh data
+            var cards = document.querySelectorAll('li.task[data-dn-times]');
+            for (var j = 0; j < cards.length; j++) {
+                delete cards[j].dataset.dnTimes;
+                var oldList = cards[j].querySelector('.dn-iv-list');
+                if (oldList) oldList.parentNode.removeChild(oldList);
+                var oldBtn = cards[j].querySelector('.dn-play-btn');
+                if (oldBtn) oldBtn.parentNode.removeChild(oldBtn);
+            }
+        })
+        .catch(function() {
+            _dnSidebarCache = null; // retry on next tick
+        });
     }
 
     function startTaskFromCard(taskId) {
@@ -501,8 +567,8 @@
         document.body.classList.toggle('dn-session-active', !!active);
     }
 
-    // Reads intervals from the Vuex store, groups by task, and injects "H:MM AM – H:MM PM"
-    // before the worked-time element. Runs on every tick; guards via data-dn-times attribute.
+    // Injects per-session interval rows into dashboard sidebar task cards.
+    // Data comes from the same API as Reports, so merge results are identical.
     function injectSidebarTimes() {
         var p = window.location.pathname;
         var isTimeline = p === '/dashboard' || p === '/dashboard/timeline' || p === '/timeline' || p === '/';
@@ -516,33 +582,20 @@
         var user = store.getters['user/user'];
         if (!user) return;
 
-        var allIntervals = (store.state.dashboard || {}).intervals || {};
-        var userIntervals = allIntervals[user.id];
-        if (!userIntervals || !userIntervals.length) return;
+        var today = new Date().toISOString().slice(0, 10);
 
-        // Hide intervals belonging to the current active session (C-022)
-        var _sess = window.__cattrCurrentSession || null;
-        if (_sess) {
-            var _sessTaskId = String(_sess.task_id);
-            var _sessStart  = new Date(dnNormTs(_sess.start_at));
-            userIntervals = userIntervals.filter(function (iv) {
-                if (String(iv.task_id) !== _sessTaskId) return true;
-                return new Date(dnNormTs(iv.start_at)) < _sessStart;
-            });
+        // Detect session change (start or stop) → force cache refresh
+        var sessKey = window.__cattrCurrentSession ? String(window.__cattrCurrentSession.task_id) : null;
+        if (sessKey !== _dnLastSessKey) {
+            _dnLastSessKey = sessKey;
+            _dnSidebarCache = null;
         }
 
-        // Group intervals by task_id, sorted most-recent-first
-        var taskIvMap = {};
-        for (var i = 0; i < userIntervals.length; i++) {
-            var iv = userIntervals[i];
-            if (!iv.task_id) continue;
-            var tid = String(iv.task_id);
-            if (!taskIvMap[tid]) taskIvMap[tid] = [];
-            taskIvMap[tid].push(iv);
-        }
-        for (var tid in taskIvMap) {
-            taskIvMap[tid] = mergeIntervals(taskIvMap[tid]).reverse();
-        }
+        fetchSidebarIntervals(user.id, today);
+
+        if (!_dnSidebarCache || !_dnSidebarCache.map) return; // still fetching first load
+
+        var taskIvMap = _dnSidebarCache.map;
 
         // Task rows are li.task; task ID from .task__title-link href /tasks/view/{id}
         var taskEls = document.querySelectorAll('li.task');
@@ -572,7 +625,6 @@
             }(hm[1]));
             el.appendChild(playBtn);
 
-            // Per-interval list below the card header row
             var ivs = taskIvMap[hm[1]];
             var ivList = document.createElement('div');
             ivList.className = 'dn-iv-list';
