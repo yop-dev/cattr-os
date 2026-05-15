@@ -671,7 +671,7 @@
         if (delBtn) { delBtn.disabled = true; delBtn.textContent = 'Deleting…'; }
         if (errEl)  { errEl.textContent = ''; }
 
-        apiFetch('/api/time-intervals/remove', { intervals: [intervalId] })
+        apiFetch('/api/time-intervals/remove', { id: intervalId })
             .then(function () {
                 // Remove card from grid
                 var card = document.querySelector('.sc-card[data-interval-id="' + intervalId + '"]');
