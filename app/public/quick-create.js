@@ -80,14 +80,8 @@
     }
 
     function fetchTasks() {
-        return apiFetch('/api/users/list', { method: 'POST', body: JSON.stringify({}) })
-            .then(function(r) { return r.ok ? r.json() : { data: [] }; })
-            .then(function(ud) {
-                var ids = (ud && ud.data) ? ud.data.map(function(u) { return u.id; }) : [];
-                var body = { where: { active: 1 } };
-                if (ids.length) body.where['users.id'] = ['=', ids];
-                return apiFetch('/api/tasks/list', { method: 'POST', body: JSON.stringify(body) });
-            })
+        var body = { where: { active: 1 } };
+        return apiFetch('/api/tasks/list', { method: 'POST', body: JSON.stringify(body) })
             .then(function(r) { return r.json(); })
             .then(function(data) {
                 var rows = (data && data.data) ? data.data : [];
